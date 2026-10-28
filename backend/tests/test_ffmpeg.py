@@ -4,10 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from app.media.demo import SAMPLES, DemoMediaProvider
+from app.media.demo import SAMPLES, DemoMediaProvider, generator_args
 from app.media.ffmpeg import (
     ProbeResult,
     StreamInfo,
+    _progress_parser,
     build_plan,
     is_browser_safe_audio,
     is_browser_safe_video,
@@ -17,6 +18,8 @@ from app.media.ffmpeg import (
 from app.media.models import JobState
 from app.media.mp4 import is_faststart, top_level_boxes
 from app.media.provider import MediaInput
+
+from .conftest import with_settings
 
 needs_ffmpeg = pytest.mark.skipif(not shutil.which("ffmpeg") or not shutil.which("ffprobe"),
                                   reason="ffmpeg/ffprobe not installed")
@@ -141,4 +144,30 @@ async def test_demo_samples_through_the_real_pipeline(settings, tmp_path, sample
     assert audio.codec_name == "aac"
     assert abs(final.duration - sample.duration) < 0.5
     if mode == "transcode":
-        assert any(r.fraction and 0 < r.fraction < 1 for r in reports), "transcoding should report progress"
+        # Reports between the 0.0 and 1.0 bookends come from FFmpeg's -progress output. A fast
+        # machine can finish inside one progress period (0.5 s) and send only the final block,
+        # so intermediate fractions are covered by test_progress_parser instead.
+        assert any(r.fraction for r in reports[1:-1]), "transcoding should report FFmpeg's progress"
+
+
+def test_progress_parser():
+    reports = []
+    handle = _progress_parser(20.0, reports.append, "Transcoding")
+    for line in ["frame=150", "out_time_us=5000000", "out_time_us=N/A", "progress=continue",
+                 "out_time_us=15000000", "out_time_us=25000000", "progress=end"]:
+        handle(line)
+    assert [r.fraction for r in reports] == [0.25, 0.75, 1.0]
+    assert {r.detail for r in reports} == {"Transcoding"}
+
+    reports.clear()
+    _progress_parser(None, reports.append, "Transcoding")("out_time_us=5000000")
+    assert reports == [], "without a duration there is no fraction to report"
+
+
+def test_demo_readrate_throttles_every_generator_input(settings):
+    sample = SAMPLES["sweep"]
+    assert "-readrate" not in generator_args(settings, sample, "out.webm", with_label=False)
+    args = generator_args(with_settings(settings, demo_readrate=4), sample, "out.webm", with_label=False)
+    inputs = [i for i, arg in enumerate(args) if arg == "lavfi"]
+    assert len(inputs) == 3
+    assert all(args[i - 3:i - 1] == ["-readrate", "4"] for i in inputs)

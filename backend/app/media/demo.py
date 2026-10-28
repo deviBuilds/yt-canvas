@@ -146,12 +146,14 @@ def generator_args(settings: Settings, sample: DemoSample, output: str, *, with_
         graph += (",drawtext=text='DEMO':fontcolor=white:fontsize=24:x=w-tw-16:y=40:"
                   "box=1:boxcolor=black@0.6:boxborderw=8")
     graph += ",format=yuv420p[v]"
+    # -readrate (FFmpeg 5.0+) makes generation take a predictable minimum time, like a download.
+    throttle = ("-readrate", str(settings.demo_readrate)) if settings.demo_readrate else ()
     return [
         settings.ffmpeg_path, "-hide_banner", "-nostdin", "-y", "-loglevel", "error",
         "-progress", "pipe:1", "-nostats",
-        "-f", "lavfi", "-i", sample.background.format(w=w, h=h, d=d),
-        "-f", "lavfi", "-i", f"color=c=black:size={w}x{TIME_BAR_HEIGHT}:rate=30:duration={d}",
-        "-f", "lavfi", "-i", f"sine=frequency={sample.tone_hz}:sample_rate=48000:duration={d}",
+        *throttle, "-f", "lavfi", "-i", sample.background.format(w=w, h=h, d=d),
+        *throttle, "-f", "lavfi", "-i", f"color=c=black:size={w}x{TIME_BAR_HEIGHT}:rate=30:duration={d}",
+        *throttle, "-f", "lavfi", "-i", f"sine=frequency={sample.tone_hz}:sample_rate=48000:duration={d}",
         "-filter_complex", graph,
         "-map", "[v]", "-map", "2:a",
         *sample.video_args, *sample.audio_args,

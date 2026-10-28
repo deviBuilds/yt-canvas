@@ -6,7 +6,8 @@ import { defineConfig, devices } from "@playwright/test";
 
 // The e2e suite runs the *production* build served by the FastAPI backend, i.e.
 // one origin for pages, API and media, exactly like a deployment. Each run gets
-// an empty media cache so preparation states are observable.
+// an empty media cache, and demo generation is capped at 4× real time, so
+// preparation states stay observable even on machines that finish in a blink.
 const port = Number(process.env.E2E_PORT ?? 8790);
 const backendDir = path.resolve(import.meta.dirname, "../backend");
 const python = process.env.YTC_PYTHON ?? path.join(backendDir, ".venv/bin/python");
@@ -38,6 +39,7 @@ export default defineConfig({
       YTC_DATA_DIR: dataDir,
       YTC_FRONTEND_DIST: path.resolve(import.meta.dirname, "dist"),
       YTC_MIN_FREE_DISK_MB: "0",
+      YTC_DEMO_READRATE: "4",
       YTC_LOG_LEVEL: "WARNING",
     },
   },

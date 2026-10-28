@@ -248,6 +248,8 @@ Every frame carries machine-readable content:
 
 Browser tests read these pixels back from the canvas.
 
+`YTC_DEMO_READRATE=N` caps generation at N× real time (FFmpeg 5.0+), so a clip takes a predictable minimum time to "download". The e2e suite sets 4, which keeps the `downloading` state visible even on machines fast enough to generate a clip in under a second.
+
 ## Tests
 
 ```bash
