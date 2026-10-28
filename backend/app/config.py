@@ -1,0 +1,156 @@
+"""Application settings, read from environment variables (prefix ``YTC_``).
+
+A ``.env`` file at the repository root is loaded if present; real environment
+variables always win over values from the file.
+"""
+
+from __future__ import annotations
+
+import os
+import shlex
+import sys
+import tempfile
+from dataclasses import dataclass, field
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _load_dotenv() -> None:
+    env_file = REPO_ROOT / ".env"
+    if not env_file.is_file():
+        return
+    try:
+        from dotenv import load_dotenv
+    except ImportError:  # pragma: no cover - python-dotenv is a pinned dependency
+        return
+    load_dotenv(env_file, override=False)
+
+
+def _str(name: str, default: str) -> str:
+    value = os.environ.get(name)
+    return value.strip() if value is not None and value.strip() else default
+
+
+def _int(name: str, default: int, minimum: int | None = None) -> int:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer, got {raw!r}") from exc
+    if minimum is not None and value < minimum:
+        raise ValueError(f"{name} must be >= {minimum}, got {value}")
+    return value
+
+
+def _bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+@dataclass(frozen=True)
+class Settings:
+    data_dir: Path
+    # Discovery
+    page_size: int = 20
+    max_search_results: int = 100
+    max_list_results: int = 500
+    metadata_cache_ttl: int = 600
+    metadata_cache_entries: int = 256
+    discovery_timeout: int = 45
+    # Media preparation
+    max_height: int = 720
+    max_concurrent_jobs: int = 2
+    max_queued_jobs: int = 16
+    max_download_bytes: int = 1024 * 1024 * 1024
+    max_duration_seconds: int = 2 * 60 * 60
+    resolve_timeout: int = 60
+    download_timeout: int = 30 * 60
+    process_timeout: int = 30 * 60
+    # Transcoding limits (only used when remuxing is not possible)
+    transcode_preset: str = "veryfast"
+    transcode_crf: int = 23
+    transcode_audio_bitrate: str = "128k"
+    ffmpeg_threads: int = 2
+    # Cache
+    cache_max_bytes: int = 4 * 1024 * 1024 * 1024
+    cache_ttl_seconds: int = 6 * 60 * 60
+    min_free_disk_bytes: int = 1024 * 1024 * 1024
+    cleanup_interval_seconds: int = 300
+    # External tools
+    ytdlp_command: tuple[str, ...] = field(default_factory=lambda: (sys.executable, "-m", "yt_dlp"))
+    ytdlp_js_runtimes: tuple[str, ...] = ()
+    ffmpeg_path: str = "ffmpeg"
+    ffprobe_path: str = "ffprobe"
+    # Features
+    enable_demo: bool = True
+    frontend_dist: Path | None = None
+    log_level: str = "INFO"
+
+    @property
+    def media_dir(self) -> Path:
+        return self.data_dir / "media"
+
+    @property
+    def work_dir(self) -> Path:
+        return self.data_dir / "work"
+
+    @property
+    def ytdlp_cache_dir(self) -> Path:
+        return self.data_dir / "ytdlp-cache"
+
+    @property
+    def profile(self) -> str:
+        """Identifies the preparation profile; part of cache keys."""
+        return f"{self.max_height}p"
+
+
+def load_settings() -> Settings:
+    _load_dotenv()
+    data_dir = Path(_str("YTC_DATA_DIR", str(Path(tempfile.gettempdir()) / "yt-canvas"))).expanduser()
+
+    ytdlp_cmd_raw = os.environ.get("YTC_YTDLP_COMMAND", "").strip()
+    ytdlp_command = tuple(shlex.split(ytdlp_cmd_raw)) if ytdlp_cmd_raw else (sys.executable, "-m", "yt_dlp")
+
+    runtimes_raw = os.environ.get("YTC_YTDLP_JS_RUNTIMES", "").strip()
+    js_runtimes = tuple(part.strip() for part in runtimes_raw.split(",") if part.strip())
+
+    dist_raw = os.environ.get("YTC_FRONTEND_DIST", "").strip()
+    frontend_dist = Path(dist_raw).expanduser() if dist_raw else REPO_ROOT / "frontend" / "dist"
+
+    mb = 1024 * 1024
+    return Settings(
+        data_dir=data_dir,
+        page_size=_int("YTC_PAGE_SIZE", 20, minimum=1),
+        max_search_results=_int("YTC_MAX_SEARCH_RESULTS", 100, minimum=1),
+        max_list_results=_int("YTC_MAX_LIST_RESULTS", 500, minimum=1),
+        metadata_cache_ttl=_int("YTC_METADATA_CACHE_TTL", 600, minimum=0),
+        discovery_timeout=_int("YTC_DISCOVERY_TIMEOUT", 45, minimum=5),
+        max_height=_int("YTC_MAX_HEIGHT", 720, minimum=144),
+        max_concurrent_jobs=_int("YTC_MAX_CONCURRENT_JOBS", 2, minimum=1),
+        max_queued_jobs=_int("YTC_MAX_QUEUED_JOBS", 16, minimum=1),
+        max_download_bytes=_int("YTC_MAX_DOWNLOAD_MB", 1024, minimum=1) * mb,
+        max_duration_seconds=_int("YTC_MAX_DURATION_SECONDS", 7200, minimum=1),
+        resolve_timeout=_int("YTC_RESOLVE_TIMEOUT", 60, minimum=5),
+        download_timeout=_int("YTC_DOWNLOAD_TIMEOUT", 1800, minimum=10),
+        process_timeout=_int("YTC_PROCESS_TIMEOUT", 1800, minimum=10),
+        transcode_preset=_str("YTC_TRANSCODE_PRESET", "veryfast"),
+        transcode_crf=_int("YTC_TRANSCODE_CRF", 23, minimum=0),
+        transcode_audio_bitrate=_str("YTC_TRANSCODE_AUDIO_BITRATE", "128k"),
+        ffmpeg_threads=_int("YTC_FFMPEG_THREADS", 2, minimum=0),
+        cache_max_bytes=_int("YTC_CACHE_MAX_MB", 4096, minimum=1) * mb,
+        cache_ttl_seconds=_int("YTC_CACHE_TTL_HOURS", 6, minimum=1) * 3600,
+        min_free_disk_bytes=_int("YTC_MIN_FREE_DISK_MB", 1024, minimum=0) * mb,
+        cleanup_interval_seconds=_int("YTC_CLEANUP_INTERVAL_SECONDS", 300, minimum=10),
+        ytdlp_command=ytdlp_command,
+        ytdlp_js_runtimes=js_runtimes,
+        ffmpeg_path=_str("YTC_FFMPEG_PATH", "ffmpeg"),
+        ffprobe_path=_str("YTC_FFPROBE_PATH", "ffprobe"),
+        enable_demo=_bool("YTC_ENABLE_DEMO", True),
+        frontend_dist=frontend_dist,
+        log_level=_str("YTC_LOG_LEVEL", "INFO").upper(),
+    )

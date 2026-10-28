@@ -1,0 +1,13 @@
+[project]
+name = "yt-canvas-backend"
+version = "0.1.0"
+description = "Discovery, media preparation and byte-range delivery for the yt-canvas player"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "ffmpeg: tests that invoke the real ffmpeg/ffprobe binaries",
+    "live: tests that contact YouTube (opt-in with YTC_LIVE_TESTS=1)",
+]
