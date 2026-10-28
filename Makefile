@@ -4,7 +4,7 @@ VENV := backend/.venv
 PY := $(VENV)/bin/python
 PORT ?= 8000
 
-.PHONY: help setup setup-backend setup-frontend dev start build test test-backend test-frontend e2e e2e-live test-live check-deps clean
+.PHONY: help setup setup-backend setup-frontend setup-e2e dev start build test test-backend test-frontend e2e e2e-live test-live check-deps clean
 
 help:
 	@echo "make setup        install backend (venv) and frontend (npm) dependencies"
@@ -13,18 +13,25 @@ help:
 	@echo "make build        production frontend build (frontend/dist)"
 	@echo "make start        serve the production build + API from one origin on :$(PORT)"
 	@echo "make test         backend pytest + frontend vitest"
+	@echo "make setup-e2e    one-time Playwright Chromium download (needed before make e2e)"
 	@echo "make e2e          Playwright browser tests (builds first; uses local demo media)"
 	@echo "make test-live    opt-in tests against real YouTube (backend + browser)"
 
 setup: setup-backend setup-frontend
 
 setup-backend:
+	@$(PYTHON) -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else "yt-canvas needs Python 3.11+ but $(PYTHON) is " + sys.version.split()[0] + ". Try: make setup PYTHON=python3.13")'
 	$(PYTHON) -m venv $(VENV)
 	$(PY) -m pip install --upgrade pip
 	$(PY) -m pip install -r backend/requirements-dev.txt
 
 setup-frontend:
+	@node -e 'const [a, b] = process.versions.node.split(".").map(Number); if (a < 22 || (a === 22 && b < 13)) { console.error("yt-canvas needs Node 22.13+ but found " + process.version); process.exit(1); }'
 	cd frontend && npm ci
+
+# One-time download of the Chromium build matching @playwright/test (for make e2e).
+setup-e2e:
+	cd frontend && npx playwright install chromium
 
 check-deps:
 	cd backend && .venv/bin/python -c "import asyncio, json; from app.config import load_settings; from app.deps import detect_dependencies; print(json.dumps(asyncio.run(detect_dependencies(load_settings())).to_dict(), indent=2))"

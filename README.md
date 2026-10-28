@@ -20,12 +20,31 @@ Requirements (versions this was built and tested with):
 | FFmpeg + ffprobe | with `libx264` and `aac` | 6.1.1 (Ubuntu 24.04 build) |
 | JavaScript runtime for yt-dlp | **Deno ≥ 2.3.0** (recommended, used automatically), or Node ≥ 22.0.0 via `YTC_YTDLP_JS_RUNTIMES=node` | Deno 2.9.8 |
 
+macOS and Linux are supported. On Windows, use WSL2 (Ubuntu) and follow the Linux steps: the backend relies on POSIX process groups to stop yt-dlp and FFmpeg cleanly.
+
+Install the tools:
+
+- **macOS (Homebrew):** `brew install python@3.13 node ffmpeg deno`. The `python3` that ships with Apple's developer tools is too old, so pass the Homebrew one to setup: `make setup PYTHON=python3.13`.
+- **Ubuntu / Debian / WSL2:**
+  - `sudo apt install python3 python3-venv ffmpeg make`. Ubuntu 22.04's Python 3.10 is too old: install `python3.11` and `python3.11-venv` and run `make setup PYTHON=python3.11`.
+  - Node 22.13+ from [nodejs.org](https://nodejs.org) or nvm, since distribution packages are usually older.
+  - Deno: `curl -fsSL https://deno.land/install.sh | sh`.
+
+Then:
+
 ```bash
-make setup          # backend venv + pip install, frontend npm ci
+git clone https://github.com/deviBuilds/yt-canvas && cd yt-canvas
+make setup          # backend venv + pip install, frontend npm ci (checks Python/Node versions)
 cp .env.example .env  # optional; every setting has a default
 make check-deps     # shows yt-dlp / yt-dlp-ejs / JS runtime / FFmpeg status
 make dev            # backend :8000 + Vite :5173 → open http://127.0.0.1:5173
+make test           # backend + frontend unit tests
+make setup-e2e      # once: download the Chromium build Playwright tests with
+make e2e            # browser tests with the local demo media
+make test-live      # real YouTube end to end (the sandbox's 403 came from its datacenter network)
 ```
+
+Prepared videos go to your system temp directory by default. Set `YTC_DATA_DIR` in `.env` to keep them somewhere permanent.
 
 Production-style, with a single origin serving the built UI, the API and the media:
 
