@@ -140,7 +140,12 @@ def _live_status(entry: dict[str, Any]) -> LiveStatus | None:
     return None
 
 
-def normalize_entry(entry: Any, *, channel_fallback: ChannelInfo | None = None) -> VideoSummary | None:
+# With sign-in set up these may well be playable, so they aren't marked unavailable.
+_SIGNIN_AVAILABILITY = {"premium_only", "subscriber_only", "needs_auth"}
+
+
+def normalize_entry(entry: Any, *, channel_fallback: ChannelInfo | None = None,
+                    signed_in: bool = False) -> VideoSummary | None:
     """Normalize one flat entry. Returns ``None`` for non-video entries."""
     if not isinstance(entry, dict):
         return None
@@ -159,7 +164,8 @@ def normalize_entry(entry: Any, *, channel_fallback: ChannelInfo | None = None) 
         reason = _UNAVAILABLE_TITLES[raw_title.lower()]
     availability = entry.get("availability")
     if reason is None and isinstance(availability, str) and availability in _UNAVAILABLE_AVAILABILITY:
-        reason = _UNAVAILABLE_AVAILABILITY[availability]
+        if not (signed_in and availability in _SIGNIN_AVAILABILITY):
+            reason = _UNAVAILABLE_AVAILABILITY[availability]
 
     return VideoSummary(
         source="youtube",
@@ -175,13 +181,14 @@ def normalize_entry(entry: Any, *, channel_fallback: ChannelInfo | None = None) 
     )
 
 
-def normalize_entries(entries: Any, *, channel_fallback: ChannelInfo | None = None) -> list[VideoSummary]:
+def normalize_entries(entries: Any, *, channel_fallback: ChannelInfo | None = None,
+                      signed_in: bool = False) -> list[VideoSummary]:
     if not isinstance(entries, list):
         return []
     seen: set[str] = set()
     items: list[VideoSummary] = []
     for entry in entries:
-        item = normalize_entry(entry, channel_fallback=channel_fallback)
+        item = normalize_entry(entry, channel_fallback=channel_fallback, signed_in=signed_in)
         if item and item.id not in seen:
             seen.add(item.id)
             items.append(item)

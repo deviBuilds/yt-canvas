@@ -6,6 +6,9 @@ shelves ("New This Week", "Recent Live Streams", ...), and a logged-out watch
 page carries its "Up next" list the same way. This module fetches a fixed set
 of such pages (never a user-supplied URL) without cookies or sign-in, extracts
 ``ytInitialData`` and normalizes the shelves into :class:`VideoSummary` items.
+When YouTube sign-in is configured, only related videos (and ``/api/me``, see
+``account.py``) are fetched with the session's youtube.com cookies; the public
+feeds never are.
 
 YouTube reshapes these renderers often, so everything here is defensive:
 unknown shapes are skipped, never raised. Items this app cannot play (live and
@@ -17,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import http.client
+import http.cookiejar
 import json
 import logging
 import re
@@ -28,6 +32,7 @@ from typing import Any, TypeVar
 from urllib.parse import unquote, urlsplit
 
 from ..config import Settings
+from ..cookies import CookieLoader, copy_jar
 from ..errors import AppError
 from ..models import ChannelInfo, Feed, FeedInfo, FeedList, LiveStatus, RelatedVideos, Shelf, VideoSummary
 from ..validation import CHANNEL_ID_RE, HANDLE_RE, VIDEO_ID_RE, validate_video_id, watch_url
@@ -81,10 +86,16 @@ def build_request(url: str) -> urllib.request.Request:
     return urllib.request.Request(url, headers=_HEADERS)
 
 
-def _download(url: str, timeout: float) -> tuple[str, str]:
+def _download(url: str, timeout: float,
+              cookies: http.cookiejar.CookieJar | None = None) -> tuple[str, str]:
     """Blocking GET; returns ``(final_url, html)``. Runs in a worker thread."""
-    # A fresh opener has no cookie processor, so no cookies are stored or sent.
-    opener = urllib.request.build_opener()
+    if cookies is None:
+        # A fresh opener has no cookie processor, so no cookies are stored or sent.
+        opener = urllib.request.build_opener()
+    else:
+        # The jar holds only youtube.com cookies, so nothing is sent to any other host; a
+        # per-request copy keeps Set-Cookie responses out of the cached jar.
+        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(copy_jar(cookies)))
     with opener.open(build_request(url), timeout=timeout) as response:
         body = response.read(_MAX_PAGE_BYTES + 1)
         final_url = response.geturl()
@@ -100,10 +111,14 @@ def _network_error(exc: BaseException) -> AppError:
                     hint="Check the server's internet connection and try again.", retryable=True)
 
 
-async def fetch_html(url: str, *, timeout: float) -> str:
-    """Fetch one of the fixed public pages without cookies. Failures become :class:`AppError`."""
+async def fetch_html(url: str, *, timeout: float, cookies: http.cookiejar.CookieJar | None = None) -> str:
+    """Fetch one of the fixed YouTube pages. Failures become :class:`AppError`.
+
+    No cookies are sent unless a (youtube.com-only) ``cookies`` jar is passed.
+    """
+    args = (url, timeout) if cookies is None else (url, timeout, cookies)
     try:
-        final_url, html = await asyncio.wait_for(asyncio.to_thread(_download, url, timeout), timeout)
+        final_url, html = await asyncio.wait_for(asyncio.to_thread(_download, *args), timeout)
     except AppError:
         raise
     except urllib.error.HTTPError as exc:
@@ -121,9 +136,11 @@ async def fetch_html(url: str, *, timeout: float) -> str:
     if host not in _PAGE_HOSTS:
         log.warning("fetching %s was redirected to %s", url, host)
         if host.startswith("consent."):
+            hint = ("Feeds are fetched without cookies, which YouTube requires in some regions. "
+                    "Search and channels still work.") if cookies is None else (
+                    "Accept YouTube's cookie notice in the signed-in browser, then try again.")
             raise AppError("youtube_blocked", "YouTube showed a cookie-consent page instead of this page.",
-                           status=503, hint="Feeds are fetched without cookies, which YouTube requires in "
-                                            "some regions. Search and channels still work.")
+                           status=503, hint=hint)
         raise AppError("youtube_blocked", "YouTube redirected this server to a verification page.", status=503,
                        hint="YouTube may be rate-limiting this network. Try again later.", retryable=True)
     return html
@@ -509,8 +526,9 @@ class YouTubePagesService:
 
     name = PROVIDER
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, cookies: CookieLoader | None = None) -> None:
         self.settings = settings
+        self.cookies = cookies
         self.feed_cache: TTLCache[Feed] = TTLCache(settings.metadata_cache_ttl, settings.metadata_cache_entries)
         self.related_cache: TTLCache[RelatedVideos] = TTLCache(
             settings.metadata_cache_ttl, settings.metadata_cache_entries
@@ -520,9 +538,13 @@ class YouTubePagesService:
         if not self.settings.enable_feeds:
             raise AppError("not_found", f"{what} are disabled (YTC_ENABLE_FEEDS=false).", status=404)
 
-    async def _load(self, url: str, parse: Callable[[dict[str, Any]], T], what: str) -> T:
+    async def _load(self, url: str, parse: Callable[[dict[str, Any]], T], what: str,
+                    cookies: http.cookiejar.CookieJar | None = None) -> T:
         # Looked up at call time so tests can monkeypatch the module-level fetcher.
-        html = await fetch_html(url, timeout=self.settings.discovery_timeout)
+        if cookies is None:
+            html = await fetch_html(url, timeout=self.settings.discovery_timeout)
+        else:
+            html = await fetch_html(url, timeout=self.settings.discovery_timeout, cookies=cookies)
         # Pages are 1-3 MB of JSON: parse off the event loop.
         result = await asyncio.to_thread(_parse_html, html, parse)
         if result is None:
@@ -550,13 +572,26 @@ class YouTubePagesService:
 
         return await self.feed_cache.get_or_fetch(("feed", source.id), load)
 
+    async def _session_cookies(self) -> http.cookiejar.CookieJar | None:
+        """The signed-in session's jar, or ``None`` (not configured, or unreadable right now)."""
+        if self.cookies is None or not self.cookies.configured:
+            return None
+        try:
+            return await self.cookies.jar()
+        except AppError as exc:
+            log.warning("related videos fall back to the logged-out page: %s", exc.message)
+            return None
+
     async def related(self, video_id: str) -> RelatedVideos:
+        """"Up next" for a video: personalized when signed in, else from the logged-out page."""
         self._require_enabled("Related videos")
         video_id = validate_video_id(video_id)
+        cookies = await self._session_cookies()
 
         async def load() -> RelatedVideos:
             items = await self._load(watch_url(video_id), lambda data: parse_related(data, video_id),
-                                     "this video's watch page")
+                                     "this video's watch page", cookies=cookies)
             return RelatedVideos(video_id=video_id, items=items, provider=PROVIDER)
 
-        return await self.related_cache.get_or_fetch(("related", video_id), load)
+        key = ("related", video_id, cookies is not None)
+        return await self.related_cache.get_or_fetch(key, load)

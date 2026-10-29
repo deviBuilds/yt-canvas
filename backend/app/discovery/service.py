@@ -81,6 +81,17 @@ class TTLCache(Generic[ModelT]):
             self._inflight.pop(key, None)
 
 
+def check_offset(settings: Settings, offset: int, cap: int) -> int:
+    """Validate a paging offset: non-negative, below ``cap`` and on a page boundary."""
+    if offset < 0:
+        raise AppError("invalid_input", "offset must not be negative.")
+    if offset >= cap:
+        raise AppError("invalid_input", f"Results are limited to the first {cap} items.")
+    if offset % settings.page_size:
+        raise AppError("invalid_input", "offset must be a multiple of the page size.")
+    return offset
+
+
 class DiscoveryService:
     def __init__(self, settings: Settings, provider: DiscoveryProvider) -> None:
         self.settings = settings
@@ -88,13 +99,7 @@ class DiscoveryService:
         self.cache: TTLCache[Page] = TTLCache(settings.metadata_cache_ttl, settings.metadata_cache_entries)
 
     def _bounds(self, offset: int, cap: int) -> int:
-        if offset < 0:
-            raise AppError("invalid_input", "offset must not be negative.")
-        if offset >= cap:
-            raise AppError("invalid_input", f"Results are limited to the first {cap} items.")
-        if offset % self.settings.page_size:
-            raise AppError("invalid_input", "offset must be a multiple of the page size.")
-        return offset
+        return check_offset(self.settings, offset, cap)
 
     async def search(self, query: str, offset: int = 0) -> Page:
         query = clean_query(query)

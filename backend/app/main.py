@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ipaddress
 import logging
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -15,10 +16,13 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .api import router
 from .config import Settings, load_settings
+from .cookies import CookieLoader
 from .deps import detect_dependencies
+from .discovery.account import AccountService
 from .discovery.provider import DiscoveryProvider
 from .discovery.service import DiscoveryService
 from .discovery.youtube_pages import YouTubePagesService
@@ -38,6 +42,75 @@ _CSP = (
     "https://*.googleusercontent.com; media-src 'self'; connect-src 'self'; "
     "frame-ancestors 'none'; base-uri 'self'"
 )
+
+
+def _is_loopback_ip(host: str | None) -> bool:
+    if not host:
+        return False
+    try:
+        ip = ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip.is_loopback
+
+
+def _is_local_host_header(value: str | None) -> bool:
+    """``Host`` names this computer: localhost, *.localhost or a loopback address (any port)."""
+    if not value:
+        return True  # HTTP/1.0 clients may omit it; the client address check still applies
+    host = value.strip().lower()
+    if host.startswith("["):
+        host = host[1:host.find("]")] if "]" in host else host
+    elif host.count(":") == 1:
+        host = host.split(":", 1)[0]
+    return host == "localhost" or host.endswith(".localhost") or _is_loopback_ip(host)
+
+
+class LoopbackGuard:
+    """While a signed-in YouTube session is configured, ``/api`` only answers this computer.
+
+    Requests must come from a loopback address and name a local host in ``Host`` (which
+    also stops DNS-rebinding pages from reaching the API through the user's browser).
+    Plain ASGI so media streaming isn't wrapped by BaseHTTPMiddleware.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            path = scope.get("path", "")
+            if path == "/api" or path.startswith("/api/"):
+                client = scope.get("client")
+                headers = dict(scope.get("headers") or [])
+                host_header = headers.get(b"host", b"").decode("latin-1") or None
+                if not (_is_loopback_ip(client[0] if client else None) and _is_local_host_header(host_header)):
+                    error = AppError(
+                        "forbidden",
+                        "This server is using a signed-in YouTube session, so it only answers requests from "
+                        "this computer.",
+                        status=403,
+                        hint="Open the app on the computer running the server (http://localhost:...), or turn "
+                             "sign-in off to use it from other devices.",
+                    )
+                    response = JSONResponse(status_code=403, content={"error": error.to_dict()})
+                    await response(scope, receive, send)
+                    return
+        await self.app(scope, receive, send)
+
+
+def _log_signin(settings: Settings) -> None:
+    if settings.cookies_from_browser:
+        log.info("YouTube sign-in: yt-dlp reads cookies from %s; the API only answers this computer",
+                 settings.signin_source)
+    elif settings.cookies_file:
+        log.info("YouTube sign-in: cookies file %s; the API only answers this computer", settings.cookies_file)
+        if not settings.cookies_file.is_file():
+            log.warning("YTC_YTDLP_COOKIES_FILE does not exist: %s", settings.cookies_file)
+    if settings.mark_watched and not settings.signed_in_configured:
+        log.warning("YTC_MARK_WATCHED has no effect without YouTube sign-in")
 
 
 async def _cleanup_loop(app: FastAPI) -> None:
@@ -76,6 +149,7 @@ def create_app(
         cleanup = asyncio.create_task(_cleanup_loop(app))
         log.info("data dir: %s (cache limit %d MB, TTL %d h)", settings.data_dir,
                  settings.cache_max_bytes // (1024 * 1024), settings.cache_ttl_seconds // 3600)
+        _log_signin(settings)
         try:
             yield
         finally:
@@ -86,7 +160,13 @@ def create_app(
     app.state.settings = settings
     app.state.storage = storage
     app.state.discovery = DiscoveryService(settings, discovery_provider or YtDlpDiscoveryProvider(settings))
-    app.state.feeds = YouTubePagesService(settings)
+    # Cookies are only read on demand (never at startup), and only when sign-in is configured.
+    cookies = CookieLoader(settings)
+    app.state.cookies = cookies
+    app.state.feeds = YouTubePagesService(settings, cookies)
+    app.state.account = AccountService(settings, cookies)
+    if settings.signed_in_configured:
+        app.add_middleware(LoopbackGuard)
 
     @app.exception_handler(AppError)
     async def app_error_handler(_: Request, exc: AppError) -> JSONResponse:

@@ -36,7 +36,7 @@ export function ChipBar({ chips, label, className }: { chips: Chip[]; label: str
   const scrollBy = (direction: number) => scroller.current?.scrollBy({ left: direction * 300, behavior: "smooth" });
 
   return (
-    <nav aria-label={label} className={cn("sticky top-14 z-20 bg-background/95 py-3 backdrop-blur", className)}>
+    <nav aria-label={label} className={cn("frosted sticky top-14 z-20 -mx-4 px-4 py-3 sm:-mx-6 sm:px-6", className)}>
       <div className="relative">
         {!edges.start ? (
           <div className="absolute inset-y-0 left-0 z-10 flex items-center bg-gradient-to-r from-background from-60% to-transparent pr-8">

@@ -1,4 +1,4 @@
-import { CircleUserRound, Compass, Heart, History, Library, Menu, UserRound, type LucideIcon } from "lucide-react";
+import { CircleUserRound, Compass, Heart, History, Library, LogIn, Menu, UserRound, type LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { PERSONAL_FEEDS, personalFeedPath } from "@/account/feeds";
+import { useMe } from "@/account/useMe";
+import { ChannelAvatar } from "@/components/ui/avatar";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { Tip } from "@/components/ui/tooltip";
 import { feedPath, useEnabledFeeds } from "@/feeds/feeds";
@@ -28,17 +31,22 @@ import { Logo } from "./Logo";
 const GUIDE_KEY = "ytc.guide.v1";
 
 /**
- * The avatar menu at the top right, where YouTube keeps your account. yt-canvas
- * has no accounts, so it holds the library pages and the appearance setting.
+ * The avatar menu at the top right, where YouTube keeps your account. Signed in
+ * (opt-in, see /signin) it shows your YouTube avatar and lists; otherwise it
+ * holds this browser's library and the appearance setting.
  */
 function AccountMenu() {
   const { mode, setMode } = useTheme();
   const { navigate } = useRouter();
-  const avatar = (size: string) => (
-    <span className={cn("flex shrink-0 items-center justify-center rounded-full bg-[#7e57c2] text-white", size)}>
-      <UserRound className="size-[60%]" strokeWidth={2} aria-hidden="true" />
-    </span>
-  );
+  const { me } = useMe();
+  const avatar = (size: string) =>
+    me.signed_in ? (
+      <ChannelAvatar name="You" src={me.avatar_url} className={size} />
+    ) : (
+      <span className={cn("flex shrink-0 items-center justify-center rounded-full bg-[#7e57c2] text-white", size)}>
+        <UserRound className="size-[60%]" strokeWidth={2} aria-hidden="true" />
+      </span>
+    );
   return (
     <DropdownMenu>
       <Tip label="You">
@@ -52,19 +60,38 @@ function AccountMenu() {
         <div className="flex items-center gap-4 px-4 pb-3 pt-2">
           {avatar("size-10")}
           <div className="min-w-0">
-            <p className="font-medium">You</p>
-            <p className="text-sm text-muted-foreground">Saved in this browser</p>
+            <p className="font-medium">{me.signed_in ? "Signed in to YouTube" : "You"}</p>
+            <p className="text-sm text-muted-foreground">
+              {me.signed_in ? `Using ${me.source ?? "browser"} cookies` : "Saved in this browser"}
+            </p>
           </div>
         </div>
         <DropdownMenuSeparator />
+        {me.signed_in
+          ? (["history", "watch_later", "liked"] as const).map((id) => {
+              const { title, icon: Icon } = PERSONAL_FEEDS[id];
+              return (
+                <DropdownMenuItem key={id} onSelect={() => navigate(personalFeedPath(id))}>
+                  <Icon /> {title}
+                </DropdownMenuItem>
+              );
+            })
+          : null}
         <DropdownMenuItem onSelect={() => navigate("/library")}>
           <Library /> Library
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => navigate("/history")}>
-          <History /> History
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => navigate("/favorites")}>
-          <Heart /> Favorites
+        {me.signed_in ? null : (
+          <>
+            <DropdownMenuItem onSelect={() => navigate("/history")}>
+              <History /> History
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => navigate("/favorites")}>
+              <Heart /> Favorites
+            </DropdownMenuItem>
+          </>
+        )}
+        <DropdownMenuItem onSelect={() => navigate("/signin")}>
+          <LogIn /> {me.signed_in ? "YouTube sign-in" : "Sign in with YouTube"}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuLabel>Appearance</DropdownMenuLabel>
@@ -117,16 +144,41 @@ function GuideSection({ title, children }: { title?: string; children: ReactNode
 /** The full sidebar ("guide"), used inline on wide screens and inside the drawer. */
 function Guide({ onNavigate }: { onNavigate?: () => void }) {
   const { feeds } = useEnabledFeeds();
+  const { me, known } = useMe();
+  const personal = (id: keyof typeof PERSONAL_FEEDS) => (
+    <GuideEntry to={personalFeedPath(id)} icon={PERSONAL_FEEDS[id].icon} label={PERSONAL_FEEDS[id].title} onNavigate={onNavigate} />
+  );
   return (
     <nav aria-label="Main" className="flex flex-col">
       <GuideSection>
         <GuideEntry to="/" icon="home" label="Home" onNavigate={onNavigate} />
+        {me.signed_in ? personal("subscriptions") : null}
       </GuideSection>
-      <GuideSection title="You">
-        <GuideEntry to="/library" icon={Library} label="Library" onNavigate={onNavigate} />
-        <GuideEntry to="/history" icon={History} label="History" onNavigate={onNavigate} />
-        <GuideEntry to="/favorites" icon={Heart} label="Favorites" onNavigate={onNavigate} />
-      </GuideSection>
+      {me.signed_in ? (
+        <GuideSection title="You">
+          {personal("history")}
+          {personal("watch_later")}
+          {personal("liked")}
+          <GuideEntry to="/library" icon={Library} label="Library" onNavigate={onNavigate} />
+          <GuideEntry to="/favorites" icon={Heart} label="Favorites" onNavigate={onNavigate} />
+        </GuideSection>
+      ) : (
+        <GuideSection title="You">
+          <GuideEntry to="/library" icon={Library} label="Library" onNavigate={onNavigate} />
+          <GuideEntry to="/history" icon={History} label="History" onNavigate={onNavigate} />
+          <GuideEntry to="/favorites" icon={Heart} label="Favorites" onNavigate={onNavigate} />
+        </GuideSection>
+      )}
+      {known && !me.signed_in ? (
+        <GuideSection>
+          <p className="px-3 py-1 text-sm leading-5">Sign in to see your recommendations, subscriptions and playlists.</p>
+          <Button asChild variant="outline" size="sm" className="ml-3 mt-2">
+            <Link to="/signin" onClick={onNavigate}>
+              <CircleUserRound /> Sign in
+            </Link>
+          </Button>
+        </GuideSection>
+      ) : null}
       {feeds.length > 0 ? (
         <GuideSection title="Explore">
           {feeds.map((feed) => (
@@ -144,7 +196,8 @@ function Guide({ onNavigate }: { onNavigate?: () => void }) {
 
 function RailEntry({ to, icon: Icon, label }: { to: string; icon: LucideIcon | "home"; label: string }) {
   const { path } = useRouter();
-  const active = isActive(path, to) || (to.startsWith("/feed/") && path.startsWith("/feed/"));
+  const personal = /^\/feed\/(subscriptions|history|watch_later|liked)$/;
+  const active = isActive(path, to) || (to.startsWith("/feed/") && !personal.test(to) && path.startsWith("/feed/") && !personal.test(path));
   return (
     <Link
       to={to}
@@ -164,9 +217,11 @@ function RailEntry({ to, icon: Icon, label }: { to: string; icon: LucideIcon | "
 /** The 72 px icon rail YouTube shows between the phone and wide layouts. */
 function MiniGuide() {
   const { feeds } = useEnabledFeeds();
+  const { me } = useMe();
   return (
     <nav aria-label="Main" className="flex flex-col items-center px-1 pt-1">
       <RailEntry to="/" icon="home" label="Home" />
+      {me.signed_in ? <RailEntry to={personalFeedPath("subscriptions")} icon={PERSONAL_FEEDS.subscriptions.icon} label="Subscriptions" /> : null}
       {feeds[0] ? <RailEntry to={feedPath(feeds[0].id)} icon={Compass} label="Explore" /> : null}
       <RailEntry to="/library" icon={CircleUserRound} label="You" />
     </nav>
@@ -208,7 +263,7 @@ export function AppShell({ banner, children }: { banner?: ReactNode; children: R
       >
         Skip to content
       </a>
-      <header className="fixed inset-x-0 top-0 z-40 flex h-14 items-center justify-between gap-2 bg-background px-2 sm:gap-4 sm:px-4">
+      <header className="frosted fixed inset-x-0 top-0 z-40 flex h-14 items-center justify-between gap-2 px-2 sm:gap-4 sm:px-4">
         <div className="flex shrink-0 items-center">
           <Button variant="ghost" size="icon" aria-label="Menu" aria-expanded={inlineGuide || drawerOpen} onClick={toggleGuide}>
             <Menu />

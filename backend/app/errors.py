@@ -29,6 +29,10 @@ class AppError(Exception):
         self.hint = hint
         self.retryable = retryable
 
+    def clone(self) -> AppError:
+        """A fresh copy, for re-raising a cached error without growing its traceback."""
+        return AppError(self.code, self.message, status=self.status, hint=self.hint, retryable=self.retryable)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "code": self.code,

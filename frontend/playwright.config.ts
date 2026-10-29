@@ -42,6 +42,8 @@ export default defineConfig({
       YTC_DEMO_READRATE: "4",
       // Keep the suite off YouTube: no Music/News/... shelves or related videos.
       YTC_ENABLE_FEEDS: "false",
+      // Ignore the developer's .env, which may turn on YouTube sign-in (real browser cookies).
+      YTC_IGNORE_DOTENV: "1",
       YTC_LOG_LEVEL: "WARNING",
     },
   },

@@ -14,6 +14,7 @@ import { Thumbnail, VideoCard } from "../components/VideoCard";
 import { discoveryApi } from "../discovery/api";
 import { useLibrary } from "../library/LibraryContext";
 import { formatBytes, formatTime, formatViews } from "../lib/format";
+import { AmbientGlow } from "../player/AmbientGlow";
 import { CanvasPlayer, type DecoderStrategy } from "../player/CanvasPlayer";
 import { SHORTCUT_HELP } from "../player/shortcuts";
 import { PreparationPanel } from "../preparation/PreparationPanel";
@@ -171,6 +172,7 @@ export function WatchView() {
   const queued = ref ? queue.items.find((item) => videoKey(item) === refKey) : undefined;
   const fromHistory = ref ? library.historyFor(ref)?.video : undefined;
   const video: VideoSummary | null = prep.job?.video ?? queued ?? fromHistory ?? (ref ? placeholder(ref) : null);
+  const playerArea = useRef<HTMLDivElement>(null);
   const videoRef = useRef(video);
   videoRef.current = video;
 
@@ -283,37 +285,40 @@ export function WatchView() {
   return (
     <div className="mx-auto flex max-w-[1754px] flex-col gap-4 pb-12 sm:px-4 sm:pt-3 lg:flex-row lg:items-start">
       <div className="min-w-0 flex-1 [--player-radius:0px] sm:[--player-radius:12px]">
-        <CanvasPlayer
-          src={prep.mediaUrl}
-          title={video.title}
-          artist={video.channel?.name ?? undefined}
-          startTime={startTime}
-          autoPlay
-          globalShortcuts
-          decoderStrategy={decoderStrategy}
-          forceFallback={forceFallback}
-          hasPrevious={queue.hasPrevious}
-          hasNext={queue.hasNext || upNext !== null}
-          onPrevious={onPrevious}
-          onNext={onNext}
-          onEnded={onEnded}
-          onTimeUpdate={onTimeUpdate}
-          onRetry={prep.retry}
-          badge={
-            ref.source === "demo" ? (
-              <span className="rounded bg-black/70 px-2 py-1 text-xs font-medium tracking-wide text-white">DEMO MEDIA · generated locally</span>
-            ) : null
-          }
-          overlay={
-            <PreparationPanel
-              job={prep.job}
-              requestError={prep.requestError}
-              reconnecting={prep.reconnecting}
-              onRetry={prep.retry}
-              onCancel={prep.cancel}
-            />
-          }
-        />
+        <div ref={playerArea} className="relative isolate">
+          <AmbientGlow container={playerArea} />
+          <CanvasPlayer
+            src={prep.mediaUrl}
+            title={video.title}
+            artist={video.channel?.name ?? undefined}
+            startTime={startTime}
+            autoPlay
+            globalShortcuts
+            decoderStrategy={decoderStrategy}
+            forceFallback={forceFallback}
+            hasPrevious={queue.hasPrevious}
+            hasNext={queue.hasNext || upNext !== null}
+            onPrevious={onPrevious}
+            onNext={onNext}
+            onEnded={onEnded}
+            onTimeUpdate={onTimeUpdate}
+            onRetry={prep.retry}
+            badge={
+              ref.source === "demo" ? (
+                <span className="rounded bg-black/70 px-2 py-1 text-xs font-medium tracking-wide text-white">DEMO MEDIA · generated locally</span>
+              ) : null
+            }
+            overlay={
+              <PreparationPanel
+                job={prep.job}
+                requestError={prep.requestError}
+                reconnecting={prep.reconnecting}
+                onRetry={prep.retry}
+                onCancel={prep.cancel}
+              />
+            }
+          />
+        </div>
 
         <section className="px-3 sm:px-0" aria-labelledby="watch-title">
           <h1 id="watch-title" className="mt-3 line-clamp-2 text-xl font-bold leading-7">

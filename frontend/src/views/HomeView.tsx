@@ -1,4 +1,4 @@
-import { ChevronRight, History } from "lucide-react";
+import { ChevronRight, History, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -9,9 +9,12 @@ import { AutoLoad, VideoGrid } from "@/components/VideoGrid";
 import { feedsApi } from "@/feeds/api";
 import { feedPath, FEEDS, useEnabledFeeds } from "@/feeds/feeds";
 import { useCachedRequest } from "@/lib/useCachedRequest";
+import { accountApi } from "@/account/api";
+import { useMe } from "@/account/useMe";
 
 import { videoKey, type VideoSummary } from "../api/types";
 import { discoveryApi } from "../discovery/api";
+import { usePagedQuery } from "../discovery/usePagedQuery";
 import { useLibrary } from "../library/LibraryContext";
 import { Link, searchPath } from "../router/router";
 
@@ -27,16 +30,20 @@ export const TOPIC_SHORTCUTS = [
   "Science explained",
 ];
 
-export function homeChips(activeFeed: string | null, searches: string[] = [], feeds = FEEDS): Chip[] {
+export function homeChips(activeFeed: string | null, searches: string[] = [], feeds = FEEDS, accountChips: string[] = []): Chip[] {
   const seen = new Set<string>();
-  const queries = [...searches, ...TOPIC_SHORTCUTS].filter((q) => {
+  const unique = (q: string) => {
     const key = q.toLowerCase();
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
-  });
+  };
+  // Signed in, the account's own home chips (each one a search here) come first, as on YouTube.
+  const account = accountChips.filter(unique);
+  const queries = [...searches, ...(account.length ? [] : TOPIC_SHORTCUTS)].filter(unique);
   return [
     { key: "all", label: "All", to: "/", active: activeFeed === null },
+    ...account.map((q) => ({ key: `a:${q}`, label: q, to: searchPath(q) })),
     ...feeds.map((feed) => ({ key: feed.id, label: feed.title, to: feedPath(feed.id), active: activeFeed === feed.id })),
     ...queries.map((q) => ({ key: `q:${q}`, label: q, to: searchPath(q) })),
   ];
@@ -122,21 +129,31 @@ export function HomeView() {
   const library = useLibrary();
   const { continueWatching, history, searches } = library;
   const { feeds, known } = useEnabledFeeds();
-  // Wait for the server's list so a disabled feed is never requested.
-  const feedOn = (id: string) => (known && feeds.some((feed) => feed.id === id) ? id : null);
+  const { me, known: meKnown } = useMe();
+
+  // Signed in (opt-in): YouTube's own recommendations, paged like YouTube's endless home.
+  const recFetcher = useCallback((offset: number, signal: AbortSignal) => accountApi.feed("recommended", offset, signal), []);
+  const rec = usePagedQuery(me.signed_in ? "me:recommended" : null, recFetcher);
+  const personal = me.signed_in && !rec.error && (rec.loading || rec.items.length > 0);
+  const recFailed = me.signed_in && rec.error !== null && rec.items.length === 0;
+
+  // Otherwise (or if that fails) the mixed grid of public feeds and local picks.
+  // Wait for the server's answers so nothing is requested twice or for nothing.
+  const mixing = meKnown && (!me.signed_in || recFailed);
+  const feedOn = (id: string) => (mixing && known && feeds.some((feed) => feed.id === id) ? id : null);
   const channels = useMemo(() => topChannels(history, 2), [history]);
 
   const sources = [
-    useChannelItems(channels[0]?.ref ?? null),
+    useChannelItems(mixing ? (channels[0]?.ref ?? null) : null),
     useFeedItems(feedOn("music")),
     useFeedItems(feedOn("news")),
-    useSearchItems(searches[0]?.query ?? null),
-    useChannelItems(channels[1]?.ref ?? null),
+    useSearchItems(mixing ? (searches[0]?.query ?? null) : null),
+    useChannelItems(mixing ? (channels[1]?.ref ?? null) : null),
     useFeedItems(feedOn("live")),
     useFeedItems(feedOn("gaming")),
   ];
   const lists = sources.map((source) => source.items);
-  const settled = known && sources.every((source) => !source.loading);
+  const settled = mixing && known && sources.every((source) => !source.loading);
   const watched = useMemo(() => new Set(history.map((h) => videoKey(h.video))), [history]);
 
   const [timedOut, setTimedOut] = useState(false);
@@ -149,7 +166,7 @@ export function HomeView() {
   // jump around; anything that arrives later goes to the end.
   const [order, setOrder] = useState<VideoSummary[] | null>(null);
   useEffect(() => {
-    if (!settled && !timedOut) return;
+    if (!mixing || (!settled && !timedOut)) return;
     const mixed = interleave(lists, watched);
     setOrder((previous) => {
       if (!previous) return mixed;
@@ -158,14 +175,16 @@ export function HomeView() {
       return extra.length ? [...previous, ...extra] : previous;
     });
     // ``lists`` holds memoized arrays, so their identities are the real dependencies.
-  }, [settled, timedOut, watched, ...lists]);
+  }, [mixing, settled, timedOut, watched, ...lists]);
 
   const { ref, columns } = useColumns();
   const [rows, setRows] = useState(4);
   const inProgress = useMemo(() => new Set(continueWatching.map((h) => videoKey(h.video))), [continueWatching]);
-  const videos = (order ?? []).filter((video) => !inProgress.has(videoKey(video)));
+  const source = personal ? rec.items : (order ?? []);
+  const videos = source.filter((video) => !inProgress.has(videoKey(video)));
+  const loading = personal ? rec.loading : order === null;
   const first = videos.slice(0, columns);
-  const rest = videos.slice(columns, columns * rows);
+  const rest = personal ? videos.slice(columns) : videos.slice(columns, columns * rows);
   const progress = useMemo(() => {
     const map = new Map(continueWatching.map((h) => [videoKey(h.video), h.duration ? h.position / h.duration : null]));
     return (video: VideoSummary) => map.get(videoKey(video)) ?? null;
@@ -173,9 +192,23 @@ export function HomeView() {
 
   return (
     <div className="px-4 pb-12 sm:px-6">
-      <ChipBar label="Topics" chips={homeChips(null, searches.slice(0, 4).map((s) => s.query), feeds)} />
+      <ChipBar
+        label="Topics"
+        chips={homeChips(null, searches.slice(0, 4).map((s) => s.query), feeds, me.signed_in ? me.chips : [])}
+      />
       <div ref={ref}>
-        {order === null ? <LoadingGrid count={columns * 2} className="pt-6" /> : null}
+        {recFailed ? (
+          <div className="mt-4 flex items-start gap-3 rounded-xl bg-secondary px-4 py-3 text-sm" role="status">
+            <TriangleAlert className="mt-0.5 size-5 shrink-0 text-danger" aria-hidden="true" />
+            <p>
+              Couldn’t load your YouTube recommendations: {rec.error?.message} Showing public videos instead.{" "}
+              <Link to="/signin" className="text-link">
+                Sign-in status
+              </Link>
+            </p>
+          </div>
+        ) : null}
+        {loading ? <LoadingGrid count={columns * 2} className="pt-6" /> : null}
         {first.length > 0 ? <VideoGrid items={first} className="pt-6" /> : null}
 
         {continueWatching.length > 0 ? (
@@ -192,13 +225,19 @@ export function HomeView() {
         ) : null}
 
         {rest.length > 0 ? <VideoGrid items={rest} className="pt-6" /> : null}
-        {videos.length > columns * rows ? (
+        {personal && rec.hasMore ? (
+          <div className="flex justify-center py-8">
+            <AutoLoad onVisible={rec.loadMore} disabled={rec.loadingMore} />
+            {rec.loadingMore ? <span className="spinner small text-muted-foreground" role="status" aria-label="Loading more" /> : null}
+          </div>
+        ) : null}
+        {!personal && videos.length > columns * rows ? (
           <div className="py-8">
             <AutoLoad onVisible={() => setRows((n) => n + 4)} disabled={false} />
           </div>
         ) : null}
 
-        {order !== null && videos.length === 0 && continueWatching.length === 0 ? (
+        {!loading && videos.length === 0 && continueWatching.length === 0 ? (
           <EmptyState title="Try searching to get started">
             Start watching videos to build a feed of videos you’ll love.
           </EmptyState>

@@ -7,6 +7,7 @@ from typing import Literal
 from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel, Field
 
+from .discovery.account import AccountService
 from .discovery.service import DiscoveryService
 from .discovery.youtube_pages import YouTubePagesService
 from .errors import AppError
@@ -15,7 +16,7 @@ from .media.demo import SAMPLES, demo_summary
 from .media.jobs import JobManager
 from .media.models import JobView
 from .media.storage import MediaStorage
-from .models import Feed, FeedList, Page, RelatedVideos
+from .models import Feed, FeedList, Me, Page, RelatedVideos
 from .validation import parse_input
 
 router = APIRouter(prefix="/api")
@@ -27,6 +28,10 @@ def _discovery(request: Request) -> DiscoveryService:
 
 def _feeds(request: Request) -> YouTubePagesService:
     return request.app.state.feeds
+
+
+def _account(request: Request) -> AccountService:
+    return request.app.state.account
 
 
 def _jobs(request: Request) -> JobManager:
@@ -45,6 +50,7 @@ async def health(request: Request) -> dict:
         "ok": deps.can_extract and deps.can_process,
         "demo_enabled": state.settings.enable_demo,
         "feeds_enabled": state.settings.enable_feeds,
+        "signed_in_configured": state.settings.signed_in_configured,
         "max_height": state.settings.max_height,
         "dependencies": deps.to_dict(),
     }
@@ -88,8 +94,20 @@ async def feed(request: Request, feed_id: str) -> Feed:
 
 @router.get("/related/{video_id}", response_model=RelatedVideos)
 async def related(request: Request, video_id: str) -> RelatedVideos:
-    """Related ("Up next") videos from the logged-out watch page."""
+    """Related ("Up next") videos from the watch page (personalized when signed in)."""
     return await _feeds(request).related(video_id)
+
+
+@router.get("/me", response_model=Me)
+async def me(request: Request) -> Me:
+    """The signed-in YouTube session. No network access unless sign-in is configured."""
+    return await _account(request).me()
+
+
+@router.get("/me/feed/{feed_id}", response_model=Page)
+async def my_feed(request: Request, feed_id: str, offset: int = 0) -> Page:
+    """recommended, subscriptions, history, watch_later or liked, for the signed-in account."""
+    return await _account(request).feed(feed_id, offset)
 
 
 @router.get("/demo", response_model=Page)

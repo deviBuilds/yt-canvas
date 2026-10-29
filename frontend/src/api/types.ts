@@ -27,7 +27,7 @@ export interface VideoSummary {
   published_text?: string | null;
 }
 
-export type PageKind = "search" | "channel" | "playlist" | "demo";
+export type PageKind = "search" | "channel" | "playlist" | "demo" | "feed";
 
 export interface Page {
   kind: PageKind;
@@ -61,6 +61,19 @@ export interface Feed {
   shelves: Shelf[];
   provider: string;
   cached: boolean;
+}
+
+/** YouTube sign-in through the browser's cookies (opt-in; see /signin). */
+export interface Me {
+  configured: boolean;
+  signed_in: boolean;
+  /** e.g. "chrome" or "cookies file". */
+  source: string | null;
+  avatar_url: string | null;
+  /** The topic chips on the account's YouTube home page. */
+  chips: string[];
+  /** Why sign-in isn't working, when configured. */
+  detail: string | null;
 }
 
 export interface ParsedInput {

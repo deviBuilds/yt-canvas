@@ -34,7 +34,7 @@ class VideoSummary(BaseModel):
     published_text: str | None = None
 
 
-PageKind = Literal["search", "channel", "playlist", "demo"]
+PageKind = Literal["search", "channel", "playlist", "demo", "feed"]
 
 
 class Page(BaseModel):
@@ -79,3 +79,17 @@ class RelatedVideos(BaseModel):
     items: list[VideoSummary]
     provider: str
     cached: bool = False
+
+
+class Me(BaseModel):
+    """The signed-in YouTube session (``GET /api/me``)."""
+
+    configured: bool
+    signed_in: bool
+    # "chrome", "safari", ... or "cookies file".
+    source: str | None = None
+    avatar_url: str | None = None
+    # Labels of the account's home-feed filter chips ("Music", "Podcasts", ...), without "All".
+    chips: list[str] = []
+    # Why signed_in is false (or null when it isn't, or when sign-in isn't configured).
+    detail: str | None = None

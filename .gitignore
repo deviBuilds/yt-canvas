@@ -13,3 +13,8 @@ frontend/playwright-report/
 # Local config and media
 .env
 *.log
+
+# YouTube sign-in cookies (see Signing in in the README). Never commit these.
+cookie.txt
+cookies.txt
+*.cookies.txt

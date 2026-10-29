@@ -1,9 +1,10 @@
 """YouTube media acquisition with yt-dlp.
 
 1. ``resolve``: one ``yt-dlp -J`` call returns metadata and every available
-   format. Live/upcoming streams, restricted videos and over-long videos are
-   rejected here, before anything is downloaded. The info JSON is kept so
-   the download step can reuse it instead of extracting again.
+   format. Live/upcoming streams, over-long videos and (unless sign-in is set
+   up) restricted videos are rejected here, before anything is downloaded. The
+   info JSON is kept so the download step can reuse it instead of extracting
+   again. With YTC_MARK_WATCHED this call also marks the video watched.
 2. ``acquire``: download the selected track(s) as separate files with
    ``--load-info-json``. Merging and any conversion happen afterwards in the
    shared FFmpeg step, in a single pass.
@@ -25,7 +26,7 @@ from ..errors import AppError
 from ..models import VideoSummary
 from ..procs import ExecutableNotFound, ProcessTimeout, run_process
 from ..validation import validate_video_id, watch_url
-from ..ytdlp import base_args, classify_error, log_failure, run_json
+from ..ytdlp import SIGNIN_HINT, base_args, classify_error, log_failure, run_json
 from .formats import FormatChoice, select_formats
 from .models import JobProgress, JobState
 from .provider import AcquiredMedia, JobContext, MediaInput, ResolvedMedia
@@ -38,6 +39,7 @@ _PROGRESS_TEMPLATE = (
     "%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s"
 )
 _IGNORED_SUFFIXES = {".part", ".ytdl", ".json", ".temp", ".tmp"}
+RESTRICTED_AVAILABILITY = frozenset({"needs_auth", "subscriber_only", "premium_only"})
 
 
 class _TooLarge(Exception):
@@ -64,9 +66,10 @@ def check_playable(info: dict[str, Any], settings: Settings) -> None:
         raise AppError("live_unsupported", "This stream just ended and YouTube is still processing it.",
                        status=422, hint="Try again later.", retryable=True)
     availability = info.get("availability")
-    if availability in {"needs_auth", "subscriber_only", "premium_only"}:
+    # Signed in, yt-dlp tries with the account instead and its error is classified if that fails.
+    if availability in RESTRICTED_AVAILABILITY and not settings.signed_in_configured:
         raise AppError("restricted", "This video requires a signed-in or paying account.", status=403,
-                       hint="Signed-in and restricted videos are not supported.")
+                       hint=SIGNIN_HINT)
     duration = info.get("duration")
     if isinstance(duration, (int, float)) and duration > settings.max_duration_seconds:
         limit_min = settings.max_duration_seconds // 60
@@ -84,16 +87,27 @@ class YouTubeMediaProvider:
     def validate_ref(self, ref: str) -> str:
         return validate_video_id(ref)
 
+    def mark_watched_args(self) -> list[str]:
+        """``--mark-watched`` for the media-preparation extraction (YTC_MARK_WATCHED, signed in only).
+
+        yt-dlp marks a video watched while extracting it, so the flag belongs on the resolve
+        call: the download step reuses that info JSON (``--load-info-json``) and never
+        extracts again. Discovery listings never mark anything.
+        """
+        if self.settings.mark_watched and self.settings.signed_in_configured:
+            return ["--mark-watched"]
+        return []
+
     async def resolve(self, ref: str, ctx: JobContext) -> ResolvedMedia:
         video_id = self.validate_ref(ref)
         args = [*base_args(self.settings), "--no-playlist", "--dump-single-json", "--skip-download",
-                "--", watch_url(video_id)]
+                *self.mark_watched_args(), "--", watch_url(video_id)]
         info = await run_json(self.settings, args, timeout=self.settings.resolve_timeout,
                               context=f"resolve {video_id}")
         if info.get("id") != video_id:
             raise AppError("extraction_failed", "yt-dlp returned metadata for a different video.", status=502)
 
-        video = normalize_entry({**info, "ie_key": "Youtube"})
+        video = normalize_entry({**info, "ie_key": "Youtube"}, signed_in=self.settings.signed_in_configured)
         if video is not None:
             ctx.set_video(video)
         check_playable(info, self.settings)

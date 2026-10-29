@@ -10,11 +10,14 @@ import { discoveryApi } from "./discovery/api";
 import { LibraryProvider } from "./library/LibraryContext";
 import { QueueProvider } from "./queue/QueueContext";
 import { RouterProvider, useRouter } from "./router/router";
+import { isPersonalFeed } from "./account/feeds";
 import { DemoView } from "./views/DemoView";
 import { FeedView } from "./views/FeedView";
 import { HomeView } from "./views/HomeView";
 import { FavoritesView, HistoryView, LibraryView, NotFoundView } from "./views/LibraryView";
 import { ChannelView, PlaylistView, SearchView } from "./views/ListViews";
+import { PersonalFeedView } from "./views/PersonalFeedView";
+import { SignInView } from "./views/SignInView";
 import { WatchView } from "./views/WatchView";
 
 function HealthBanner() {
@@ -55,7 +58,10 @@ function HealthBanner() {
 
 function Routes() {
   const { path } = useRouter();
-  if (path.startsWith("/feed/")) return <FeedView id={decodeURIComponent(path.slice("/feed/".length))} />;
+  if (path.startsWith("/feed/")) {
+    const id = decodeURIComponent(path.slice("/feed/".length));
+    return isPersonalFeed(id) ? <PersonalFeedView id={id} /> : <FeedView id={id} />;
+  }
   switch (path) {
     case "/":
       return <HomeView />;
@@ -75,6 +81,8 @@ function Routes() {
       return <FavoritesView />;
     case "/demo":
       return <DemoView />;
+    case "/signin":
+      return <SignInView />;
     default:
       return <NotFoundView />;
   }

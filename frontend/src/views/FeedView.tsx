@@ -7,6 +7,7 @@ import { feedsApi } from "@/feeds/api";
 import { FEEDS, useEnabledFeeds } from "@/feeds/feeds";
 import { useLibrary } from "@/library/LibraryContext";
 import { useCachedRequest } from "@/lib/useCachedRequest";
+import { useMe } from "@/account/useMe";
 
 import { homeChips } from "./HomeView";
 import { NotFoundView } from "./LibraryView";
@@ -16,6 +17,7 @@ export function FeedView({ id }: { id: string }) {
   const feed = FEEDS.find((f) => f.id === id);
   const { searches } = useLibrary();
   const { feeds } = useEnabledFeeds();
+  const { me } = useMe();
   const fetcher = useCallback((signal: AbortSignal) => feedsApi.get(id, signal), [id]);
   const { data, error, loading, retry } = useCachedRequest(feed ? `feed:${id}` : null, fetcher);
   if (!feed) return <NotFoundView />;
@@ -24,7 +26,7 @@ export function FeedView({ id }: { id: string }) {
 
   return (
     <div className="px-4 pb-12 sm:px-6">
-      <ChipBar label="Topics" chips={homeChips(id, searches.slice(0, 4).map((s) => s.query), feeds)} />
+      <ChipBar label="Topics" chips={homeChips(id, searches.slice(0, 4).map((s) => s.query), feeds, me.signed_in ? me.chips : [])} />
       <header className="flex items-center gap-4 pb-2 pt-4 sm:gap-6">
         <span className="flex size-16 shrink-0 items-center justify-center rounded-full bg-secondary sm:size-20" aria-hidden="true">
           <Icon className="size-8 sm:size-10" strokeWidth={1.5} />

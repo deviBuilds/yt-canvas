@@ -23,6 +23,24 @@ pytestmark = [
 VIDEO_ID = os.environ.get("YTC_LIVE_VIDEO_ID", "aqz-KE-bpKQ")
 
 
+def _signed_in_settings():
+    """The configured sign-in (YTC_YTDLP_COOKIES_*), only looked at when live tests are on."""
+    if os.environ.get("YTC_LIVE_TESTS") != "1":
+        return None
+    from app.config import load_settings
+
+    try:
+        settings = load_settings()
+    except ValueError:
+        return None
+    return settings if settings.signed_in_configured else None
+
+
+SIGNED_IN = _signed_in_settings()
+needs_signin = pytest.mark.skipif(
+    SIGNED_IN is None, reason="set YTC_YTDLP_COOKIES_FROM_BROWSER or YTC_YTDLP_COOKIES_FILE to test sign-in")
+
+
 @pytest.fixture(scope="module")
 def client(tmp_path_factory):
     from app.config import Settings
@@ -94,3 +112,33 @@ def test_live_preparation(client):
     assert job["state"] == "ready", f"live preparation failed: {job['error']}"
     head = client.head(job["media"]["url"])
     assert head.status_code == 200 and int(head.headers["content-length"]) > 0
+
+
+@pytest.fixture(scope="module")
+def signed_in_client(tmp_path_factory):
+    from app.config import Settings
+
+    settings = Settings(data_dir=tmp_path_factory.mktemp("live-signin"), min_free_disk_bytes=0, frontend_dist=None,
+                        cookies_from_browser=SIGNED_IN.cookies_from_browser, cookies_file=SIGNED_IN.cookies_file)
+    # The API only answers loopback clients while sign-in is configured.
+    with TestClient(create_app(settings), client=("127.0.0.1", 50000), base_url="http://localhost") as client:
+        yield client
+
+
+@needs_signin
+def test_live_me_signed_in(signed_in_client):
+    response = signed_in_client.get("/api/me")
+    assert response.status_code == 200, response.text
+    me = response.json()
+    print(f"\nme: signed_in={me['signed_in']} source={me['source']} chips={me['chips']} detail={me['detail']}")
+    assert me["configured"] is True
+    assert me["signed_in"] is True, me["detail"]
+
+
+@needs_signin
+def test_live_recommended_feed(signed_in_client):
+    response = signed_in_client.get("/api/me/feed/recommended")
+    assert response.status_code == 200, response.text
+    page = response.json()
+    print(f"\nrecommended: {len(page['items'])} videos, next_offset={page['next_offset']}")
+    assert page["kind"] == "feed" and page["items"], "the signed-in home feed returned no videos"

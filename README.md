@@ -86,7 +86,9 @@ Without a runtime, formats go missing or extraction fails. `GET /api/health` and
   - **Sidebar:** Home, your Library (History, Favorites) and Explore (Music, News, Live, Gaming). It's full width from 1312 px, a 72 px icon rail from 792 px, and a drawer on phones and on the watch page.
 - **Home** has a row of chips (feeds, recent searches and topic searches), then one continuous grid of videos, as on YouTube. **Continue watching** appears as a shelf after the first row. The grid mixes:
   - YouTube's **public Music, News, Live and Gaming pages** (see [Home feeds](#home-feeds-and-related-videos))
-  - more videos from the channels you watch most and from your latest search, taken only from this browser's history. yt-canvas never signs in, so there are no personalized YouTube recommendations.
+  - more videos from the channels you watch most and from your latest search, taken only from this browser's history.
+
+  If you [sign in (opt-in)](#signing-in-opt-in), Home shows YouTube's own recommendations and your topic chips instead.
 - **Search results** use YouTube's list layout; channels and playlists have their own headers with **Play all** (and **Shuffle** for playlists). Every card has a ⋮ menu: add to queue, save to Favorites, remove from history, open on YouTube.
 - **Watch page:** the canvas player has:
   - play/pause, seek, volume/mute, previous/next and fullscreen, plus a settings gear with speed (0.25–2×) and the visual effect
@@ -135,10 +137,10 @@ Flat extraction never resolves streams, so rendering results downloads nothing.
 
 YouTube retired its Trending page: `/feed/trending` and `/feed/explore` now redirect to the home page, and a logged-out home page has no videos. yt-dlp also returns nothing for YouTube's topic channels. Their public pages do carry curated shelves, though, so `backend/app/discovery/youtube_pages.py` reads them directly:
 
-- **Pages:** a fixed list, never a user-supplied URL. They are fetched over HTTPS **without cookies or sign-in**: Music (`UC-9-kyTW8ZkZNDHQJ6FgpwQ`), News (`UCYfdidRxbB8Qhf0Nx7ioOYw`), Live (`UC4R8DWoMoI7CAwX8_LjQHig`) and `youtube.com/gaming`.
+- **Pages:** a fixed list, never a user-supplied URL. They are fetched over HTTPS **without cookies or sign-in**, even when [signed in](#signing-in-opt-in): Music (`UC-9-kyTW8ZkZNDHQJ6FgpwQ`), News (`UCYfdidRxbB8Qhf0Nx7ioOYw`), Live (`UC4R8DWoMoI7CAwX8_LjQHig`) and `youtube.com/gaming`.
 - **Parsing:** the `ytInitialData` JSON embedded in each page is walked for shelves. `videoRenderer`, `gridVideoRenderer`, `compactVideoRenderer` and `lockupViewModel` items are normalized into the same `VideoSummary` as search results, plus `published_text` and the channel's `avatar_url`.
 - **Filtering:** only playable videos are kept. Live-now and upcoming streams, Shorts, playlists, mixes, albums and members-only videos are dropped, and so are shelves left empty. Music's "New & Trending Songs" and "Top Charts" shelves are all playlists, so they don't appear.
-- **Related videos:** they come from the logged-out watch page's `secondaryResults`.
+- **Related videos:** they come from the watch page's `secondaryResults`, which is personalized when you're signed in.
 - **Caching and errors:** results are cached for 10 minutes (`YTC_METADATA_CACHE_TTL`); failures are not cached. A consent or verification redirect becomes `youtube_blocked`.
 - **Turning it off:** `YTC_ENABLE_FEEDS=false` keeps the server off these pages. The UI then hides the feed shelves and Explore links, and the watch page falls back to more from the channel. The e2e suite runs this way.
 
@@ -245,6 +247,8 @@ Identical requests share one job; a file already in the cache yields an immediat
 | `GET /api/feeds` | The home feeds on offer (`[]` when `YTC_ENABLE_FEEDS=false`) |
 | `GET /api/feeds/{music\|news\|live\|gaming}` | A feed as titled shelves of videos |
 | `GET /api/related/{video_id}` | Related videos for the watch page |
+| `GET /api/me` | YouTube sign-in state: configured, signed in, source, avatar, home chips ([Signing in](#signing-in-opt-in)) |
+| `GET /api/me/feed/{recommended\|subscriptions\|history\|watch_later\|liked}?offset=` | The signed-in account's lists (401 `signed_out` when sign-in isn't set up) |
 | `GET /api/demo`, `GET /api/demo/{id}/layout` | Demo samples and their pixel layout |
 | `POST /api/jobs` `{source: "youtube"\|"demo", id}` | Create or join a preparation job (201 new, 200 existing) |
 | `GET /api/jobs/{id}` / `DELETE /api/jobs/{id}` | Job status / cancel |
@@ -252,9 +256,45 @@ Identical requests share one job; a file already in the cache yields an immediat
 
 Errors are always `{"error": {code, message, hint, retryable}}`. The codes include:
 
-`invalid_input`, `not_found`, `unavailable`, `live_unsupported`, `restricted`, `youtube_blocked`, `download_forbidden`, `rate_limited`, `js_runtime_problem`, `no_formats`, `too_large`, `too_long`, `dependency_missing`, `storage_full`, `busy`, `timeout`, `processing_failed`, `cancelled`.
+`invalid_input`, `not_found`, `unavailable`, `live_unsupported`, `restricted`, `youtube_blocked`, `download_forbidden`, `rate_limited`, `js_runtime_problem`, `no_formats`, `too_large`, `too_long`, `dependency_missing`, `storage_full`, `busy`, `timeout`, `processing_failed`, `cancelled`, `signed_out`, `signin_failed`, `forbidden`.
 
 Raw yt-dlp and FFmpeg output stays in the backend log with URL query strings redacted.
+
+## Signing in (opt-in)
+
+yt-canvas can reuse the YouTube session from a browser on this computer, for a personalized experience much closer to YouTube's:
+
+- **Home:** YouTube's own recommendations and your topic chips.
+- **Sidebar:** Subscriptions, History, Watch later and Liked videos.
+- **Watch page:** related videos for your account.
+- **Restricted videos:** age-restricted and members-only videos your account can see are attempted instead of rejected.
+
+It is **off by default**. The `/signin` page in the app shows the same steps and the current status.
+
+1. Sign in to YouTube in Chrome (or Safari, Firefox, Brave, Edge, Opera, Vivaldi, Chromium or Whale).
+2. Add **one** of these to `.env`:
+   - `YTC_YTDLP_COOKIES_FROM_BROWSER=chrome`, or `safari`, or `chrome:Profile 1` for another Chrome profile.
+   - `YTC_YTDLP_COOKIES_FILE=/path/to/cookies.txt`, a Netscape cookies file. yt-dlp rewrites this file after every run, and exported files go stale once YouTube rotates the cookies, so reading from the browser is more reliable.
+     - It must be in **Netscape** format; JSON exports (e.g. Cookie-Editor's default) don't load, so choose its Netscape export.
+     - Keep it outside the repository or under a git-ignored name: `cookie.txt`, `cookies.txt` and `*.cookies.txt` are ignored.
+     - On macOS, use this if macOS blocks the terminal running the server from reading the browser's profile. `/api/me` says so when that happens.
+3. Restart the server. On macOS:
+   - Chrome and other Chromium browsers ask for Keychain access to "<Browser> Safe Storage". Choose **Always Allow**, because every yt-dlp run reads the cookies again.
+   - Safari needs Full Disk Access for the app that runs the server (e.g. your terminal).
+   - Firefox doesn't ask.
+4. Optional: `YTC_MARK_WATCHED=true` also marks what you watch in yt-canvas as watched on YouTube, so it shapes your recommendations.
+
+How the session is used:
+- **yt-dlp:** it gets `--cookies-from-browser` (or `--cookies`) and reads the cookies in its own process each time.
+- **Page fetches:** the account and related-video pages are fetched with the browser's youtube.com cookies, loaded through yt-dlp's cookie module and kept in memory for 10 minutes.
+- **Never exposed:** nothing is written to disk, logged or sent to the browser UI.
+- **Loopback only:** while sign-in is on, the API answers only requests from this computer (`127.0.0.1` / `::1`); anything else gets 403 `forbidden`.
+
+Before turning it on, weigh these:
+- **Account scope:** those cookies are your whole Google session, not just YouTube.
+- **Account standing:** automated use of a real account can get it signed out or flagged by Google, and yt-dlp's documentation warns about this. A secondary account is safer.
+- **Terms of Service:** it's further outside YouTube's terms than signed-out use.
+- **Expiry:** if YouTube rotates or expires the session, `/api/me` reports why, and Home falls back to the public feeds.
 
 ## Demo / test media
 
@@ -330,12 +370,12 @@ make test-live   # opt-in: real YouTube (backend + browser)
 
 ## Limitations
 
-- Only public, non-live videos are supported. Live or upcoming streams, age/member/paid-restricted videos and private videos are rejected with an explanation. Cookie/login collection and access-restriction workarounds are intentionally not implemented.
+- Only non-live videos are supported. Live or upcoming streams and private videos are rejected with an explanation. Age-, member- and paid-restricted videos are rejected unless you've [signed in](#signing-in-opt-in) with an account that can watch them. yt-canvas never asks for passwords and never works around access restrictions.
 - YouTube extraction breaks periodically. Keep `yt-dlp` and `yt-dlp-ejs` updated, and expect HTTP 403/429 or bot checks from some networks, notably cloud IPs.
 - Playback waits for full preparation (no progressive streaming yet). Prepared media up to 720p is stored on local disk.
 - Output is always H.264/AAC MP4; VP9/AV1/Opus sources are transcoded, which costs CPU time.
 - Search is capped at 100 results and channels/playlists at 500 items (configurable). Only a channel's "Videos" tab is listed.
-- Favorites, history and the queue are per browser; there are no accounts.
+- Favorites, history and the queue are per browser. Signing in (opt-in) reads your YouTube lists and never likes, subscribes or saves to playlists. The only change it can make to your account is adding videos you watch to your YouTube history, and only if you also set `YTC_MARK_WATCHED=true`.
 - Single backend process; state is in memory apart from the media cache.
 
 ## Configuration

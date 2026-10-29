@@ -34,7 +34,17 @@ def base_args(settings: Settings) -> list[str]:
     ]
     for runtime in settings.ytdlp_js_runtimes:
         args += ["--js-runtimes", runtime]
+    # Opt-in sign-in. yt-dlp reads the cookies itself on every run; with --cookies it also
+    # writes the (possibly refreshed) jar back to that file when it exits.
+    spec = settings.browser_spec
+    if spec is not None:
+        args += ["--cookies-from-browser", spec.to_arg()]
+    elif settings.cookies_file is not None:
+        args += ["--cookies", str(settings.cookies_file)]
     return args
+
+
+SIGNIN_HINT = "This video needs a signed-in account; see Signing in in the README."
 
 
 # (pattern, code, http status, user message, hint, retryable)
@@ -60,7 +70,7 @@ _ERROR_RULES: list[tuple[re.Pattern[str], str, int, str, str | None, bool]] = [
         "restricted",
         403,
         "This video is age-restricted and requires a signed-in account.",
-        "Signed-in and restricted videos are not supported.",
+        "Age-restricted videos need a signed-in, age-verified account; see Signing in in the README.",
         False,
     ),
     (
@@ -68,7 +78,7 @@ _ERROR_RULES: list[tuple[re.Pattern[str], str, int, str, str | None, bool]] = [
         "restricted",
         403,
         "This video is limited to members or paying viewers.",
-        "Signed-in and restricted videos are not supported.",
+        "It needs a signed-in account with access to it; see Signing in in the README.",
         False,
     ),
     (
@@ -78,6 +88,26 @@ _ERROR_RULES: list[tuple[re.Pattern[str], str, int, str, str | None, bool]] = [
         "YouTube is asking this server to prove it isn't a bot.",
         "YouTube is rate-limiting or blocking this server's network. Try again later or from another network.",
         True,
+    ),
+    (
+        re.compile(r"could not find \w+ cookies database|failed to load cookies|"
+                   r"unsupported browser specified for cookies|Netscape format(ted)? cookies file|"
+                   r"Cookies file must be Netscape", re.I),
+        "signin_failed",
+        503,
+        "yt-dlp couldn't read the YouTube cookies.",
+        "Check YTC_YTDLP_COOKIES_FROM_BROWSER or YTC_YTDLP_COOKIES_FILE; see Signing in in the README.",
+        True,
+    ),
+    (
+        re.compile(r"Login details are needed|only available for registered users|"
+                   r"cookies are no longer valid", re.I),
+        "signed_out",
+        401,
+        "YouTube needs a signed-in account for this.",
+        "If sign-in is set up, YouTube didn't accept the cookies (signed out or expired): sign in to "
+        "YouTube in that browser again, or export a fresh cookies file. See Signing in in the README.",
+        False,
     ),
     (
         re.compile(r"Requested format is not available|No video formats found", re.I),
@@ -184,9 +214,18 @@ def classify_error(stderr: str, *, default_code: str = "extraction_failed") -> A
     )
 
 
+# yt-dlp quotes the offending line (cookie name and value) when it can't parse a cookies.txt entry.
+_COOKIE_LINE_RE = re.compile(r"cookie file entry|Netscape format cookies file", re.I)
+
+
+def _without_cookie_lines(text: str) -> str:
+    return "\n".join("<line about the cookies file removed>" if _COOKIE_LINE_RE.search(line) else line
+                     for line in text.splitlines())
+
+
 def log_failure(context: str, result_or_tail: ProcessResult | str) -> None:
     tail = result_or_tail.stderr_tail if isinstance(result_or_tail, ProcessResult) else result_or_tail
-    log.warning("%s failed; yt-dlp stderr (redacted):\n%s", context, redact(tail[-8000:]))
+    log.warning("%s failed; yt-dlp stderr (redacted):\n%s", context, redact(_without_cookie_lines(tail[-8000:])))
 
 
 async def run_json(settings: Settings, args: list[str], *, timeout: float, context: str) -> dict[str, Any]:

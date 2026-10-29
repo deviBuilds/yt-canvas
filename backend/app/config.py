@@ -7,18 +7,21 @@ variables always win over values from the file.
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NamedTuple
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _load_dotenv() -> None:
     env_file = REPO_ROOT / ".env"
-    if not env_file.is_file():
+    # Test runs set this so a developer's .env (which may turn on sign-in) never leaks in.
+    if os.environ.get("YTC_IGNORE_DOTENV") == "1" or not env_file.is_file():
         return
     try:
         from dotenv import load_dotenv
@@ -50,6 +53,71 @@ def _bool(name: str, default: bool) -> bool:
     if raw is None or not raw.strip():
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Mirrors yt-dlp's own parsing of --cookies-from-browser (yt_dlp/__init__.py):
+# BROWSER[+KEYRING][:PROFILE][::CONTAINER]
+_BROWSER_SPEC_RE = re.compile(r"""(?x)
+    (?P<name>[^+:]+)
+    (?:\s*\+\s*(?P<keyring>[^:]+))?
+    (?:\s*:\s*(?!:)(?P<profile>.+?))?
+    (?:\s*::\s*(?P<container>.+))?
+""")
+# Copies of yt_dlp.cookies.SUPPORTED_BROWSERS / SUPPORTED_KEYRINGS, used only if yt-dlp
+# can't be imported in-process (e.g. YTC_YTDLP_COMMAND points at a separate install).
+_FALLBACK_BROWSERS = frozenset({"brave", "chrome", "chromium", "edge", "opera", "vivaldi", "whale",
+                                "firefox", "safari"})
+_FALLBACK_KEYRINGS = frozenset({"KWALLET", "KWALLET5", "KWALLET6", "GNOMEKEYRING", "BASICTEXT"})
+
+
+class BrowserSpec(NamedTuple):
+    browser: str
+    keyring: str | None = None
+    profile: str | None = None
+    container: str | None = None
+
+    def to_arg(self) -> str:
+        """Canonical ``--cookies-from-browser`` value (one argv element, never shell-parsed)."""
+        arg = self.browser
+        if self.keyring:
+            arg += f"+{self.keyring}"
+        if self.profile:
+            arg += f":{self.profile}"
+        if self.container:
+            arg += f"::{self.container}"
+        return arg
+
+
+def _supported_browsers_and_keyrings() -> tuple[frozenset[str], frozenset[str]]:
+    try:
+        from yt_dlp.cookies import SUPPORTED_BROWSERS, SUPPORTED_KEYRINGS
+    except ImportError:  # pragma: no cover - yt-dlp is a pinned dependency
+        return _FALLBACK_BROWSERS, _FALLBACK_KEYRINGS
+    return frozenset(SUPPORTED_BROWSERS), frozenset(SUPPORTED_KEYRINGS)
+
+
+def parse_browser_spec(spec: str) -> BrowserSpec:
+    """Parse ``BROWSER[+KEYRING][:PROFILE][::CONTAINER]`` exactly as yt-dlp does.
+
+    Raises :class:`ValueError` (naming the environment variable) when malformed.
+    """
+    name = "YTC_YTDLP_COOKIES_FROM_BROWSER"
+    match = _BROWSER_SPEC_RE.fullmatch(spec.strip())
+    if match is None:
+        raise ValueError(f"{name} is not valid: {spec!r}. Use BROWSER[+KEYRING][:PROFILE][::CONTAINER], "
+                         "e.g. chrome, safari, firefox or \"chrome:Profile 1\".")
+    browser, keyring, profile, container = match.group("name", "keyring", "profile", "container")
+    browser = browser.strip().lower()
+    browsers, keyrings = _supported_browsers_and_keyrings()
+    if browser not in browsers:
+        raise ValueError(f"{name} names an unsupported browser: {browser!r}. "
+                         f"Supported browsers are: {', '.join(sorted(browsers))}.")
+    if keyring is not None:
+        keyring = keyring.strip().upper()
+        if keyring not in keyrings:
+            raise ValueError(f"{name} names an unsupported keyring: {keyring!r}. "
+                             f"Supported keyrings are: {', '.join(sorted(keyrings))}.")
+    return BrowserSpec(browser, keyring, profile, container)
 
 
 @dataclass(frozen=True)
@@ -92,6 +160,34 @@ class Settings:
     enable_feeds: bool = True  # curated public YouTube pages (Music, News, ...) and related videos
     frontend_dist: Path | None = None
     log_level: str = "INFO"
+    # Opt-in YouTube sign-in: yt-dlp reads the account's cookies from a browser profile
+    # (BROWSER[+KEYRING][:PROFILE][::CONTAINER]) or from a Netscape cookies.txt file.
+    cookies_from_browser: str | None = None
+    cookies_file: Path | None = None
+    mark_watched: bool = False  # add prepared videos to the account's watch history
+
+    def __post_init__(self) -> None:
+        if self.cookies_from_browser is not None:
+            parse_browser_spec(self.cookies_from_browser)
+        if self.cookies_from_browser and self.cookies_file:
+            raise ValueError("Set only one of YTC_YTDLP_COOKIES_FROM_BROWSER and YTC_YTDLP_COOKIES_FILE.")
+
+    @property
+    def signed_in_configured(self) -> bool:
+        """True when yt-dlp and page fetches should use the account's cookies."""
+        return bool(self.cookies_from_browser or self.cookies_file)
+
+    @property
+    def browser_spec(self) -> BrowserSpec | None:
+        return parse_browser_spec(self.cookies_from_browser) if self.cookies_from_browser else None
+
+    @property
+    def signin_source(self) -> str | None:
+        """Short human name of where the cookies come from: ``"chrome"``, ``"cookies file"``."""
+        spec = self.browser_spec
+        if spec is not None:
+            return spec.browser
+        return "cookies file" if self.cookies_file else None
 
     @property
     def media_dir(self) -> Path:
@@ -120,6 +216,14 @@ def load_settings() -> Settings:
 
     runtimes_raw = os.environ.get("YTC_YTDLP_JS_RUNTIMES", "").strip()
     js_runtimes = tuple(part.strip() for part in runtimes_raw.split(",") if part.strip())
+
+    browser_raw = os.environ.get("YTC_YTDLP_COOKIES_FROM_BROWSER", "").strip()
+    cookies_raw = os.environ.get("YTC_YTDLP_COOKIES_FILE", "").strip()
+    cookies_file = None
+    if cookies_raw:
+        cookies_file = Path(cookies_raw).expanduser().absolute()
+        if cookies_file.is_dir():
+            raise ValueError(f"YTC_YTDLP_COOKIES_FILE must be a cookies.txt file, not a directory: {cookies_raw!r}")
 
     dist_raw = os.environ.get("YTC_FRONTEND_DIST", "").strip()
     frontend_dist = Path(dist_raw).expanduser() if dist_raw else REPO_ROOT / "frontend" / "dist"
@@ -157,4 +261,7 @@ def load_settings() -> Settings:
         enable_feeds=_bool("YTC_ENABLE_FEEDS", True),
         frontend_dist=frontend_dist,
         log_level=_str("YTC_LOG_LEVEL", "INFO").upper(),
+        cookies_from_browser=browser_raw or None,
+        cookies_file=cookies_file,
+        mark_watched=_bool("YTC_MARK_WATCHED", False),
     )

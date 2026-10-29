@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import dataclasses
+import os
 from pathlib import Path
 
 import pytest
 
-from app.config import Settings
+# Keep the developer's .env out of unit tests: it may switch on YouTube sign-in, which
+# would read real browser cookies. Opt-in live runs (YTC_LIVE_TESTS=1) do use it, so the
+# signed-in live tests can run against the account set up there. This runs before any
+# test module imports app.main (which builds an app from the environment at import time).
+if os.environ.get("YTC_LIVE_TESTS") != "1":
+    os.environ["YTC_IGNORE_DOTENV"] = "1"
+
+from app.config import Settings  # noqa: E402
 
 
 @pytest.fixture

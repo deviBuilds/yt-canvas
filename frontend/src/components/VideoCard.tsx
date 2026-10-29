@@ -1,5 +1,5 @@
 import { EllipsisVertical, ExternalLink, Heart, ListPlus, Play, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 
 import { ChannelAvatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useThumbnailTint } from "@/lib/thumbnailColor";
 import { cn } from "@/lib/utils";
+import { useTheme } from "@/theme/ThemeContext";
 
 import type { VideoSummary } from "../api/types";
 import { useLibrary } from "../library/LibraryContext";
@@ -30,6 +32,7 @@ export function Thumbnail({
   className?: string;
 }) {
   const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const live = isLive(video);
   return (
     <div className={cn("thumb relative aspect-video w-full overflow-hidden rounded-xl bg-skeleton", className)}>
@@ -44,7 +47,8 @@ export function Thumbnail({
           loading="lazy"
           decoding="async"
           referrerPolicy="no-referrer"
-          className="absolute inset-0 size-full object-cover"
+          className={cn("absolute inset-0 size-full object-cover transition-opacity duration-300", loaded ? "opacity-100" : "opacity-0")}
+          onLoad={() => setLoaded(true)}
           onError={() => setFailed(true)}
         />
       ) : (
@@ -190,6 +194,10 @@ export function VideoCard({
   className,
 }: VideoCardProps) {
   const queue = useQueue();
+  const { dark } = useTheme();
+  const [hovered, setHovered] = useState(false);
+  // YouTube tints a hovered grid card with its thumbnail's colour; sampled on first hover.
+  const tint = useThumbnailTint(variant === "grid" ? video.thumbnail_url : null, hovered, dark);
   const live = isLive(video);
   const playable = video.available && !live;
   const play = () => (onPlay ? onPlay(video) : queue.select(video));
@@ -263,13 +271,21 @@ export function VideoCard({
   }
 
   return (
-    <article className={cn("card group relative flex min-w-0 flex-col gap-3", className)}>
+    <article
+      className={cn("card group relative isolate flex min-w-0 flex-col gap-3", className)}
+      onPointerEnter={() => setHovered(true)}
+      style={tint ? ({ "--card-tint": tint.background, "--card-accent": tint.accent } as CSSProperties) : undefined}
+    >
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -inset-3 -z-10 rounded-2xl bg-[var(--card-tint,var(--secondary))] opacity-0 transition-opacity duration-200 group-hover:opacity-100 [@media(hover:none)]:hidden"
+      />
       {thumbLink()}
       <div className="flex gap-2">
         {hideChannel ? null : <CardAvatar video={video} />}
         <div className="min-w-0 flex-1">
           <h3 className="card-title line-clamp-2 text-base font-medium leading-[22px]">{titleLink}</h3>
-          <div className="flex flex-wrap items-center gap-x-2 text-sm leading-5 text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-x-2 text-sm leading-5 text-muted-foreground transition-colors group-hover:text-[var(--card-accent,var(--muted-foreground))]">
             {hideChannel ? null : <ChannelName video={video} className="max-w-full" />}
             <Stats video={video} />
           </div>

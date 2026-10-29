@@ -65,7 +65,7 @@ export function SearchView() {
   return (
     <div className="px-4 pb-6 sm:px-6">
       {/* YouTube's search page opens with a sticky row of filter chips. */}
-      <header className="sticky top-14 z-20 flex h-14 items-center justify-between gap-3 bg-background">
+      <header className="frosted sticky top-14 z-20 -mx-4 flex h-14 items-center justify-between gap-3 px-4 sm:-mx-6 sm:px-6">
         <h1 className="sr-only">Search results for “{q}”</h1>
         <span className="flex h-8 items-center rounded-lg bg-chip-active px-3 text-sm font-medium text-chip-active-foreground" aria-hidden="true">
           All

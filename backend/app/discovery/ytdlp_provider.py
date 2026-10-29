@@ -49,7 +49,8 @@ class YtDlpDiscoveryProvider:
         cap = self.settings.max_search_results
         total = min(offset + limit + 1, cap + 1)
         data = await self._flat(f"ytsearch{total}:{query}", offset=offset, limit=limit, context="search")
-        items, next_offset = self._paginate(normalize_entries(data.get("entries")), offset, limit, cap)
+        entries = normalize_entries(data.get("entries"), signed_in=self.settings.signed_in_configured)
+        items, next_offset = self._paginate(entries, offset, limit, cap)
         return Page(
             kind="search",
             title=query,
@@ -66,7 +67,8 @@ class YtDlpDiscoveryProvider:
             channel = channel.model_copy(update={"ref": ref})
         name = channel.name or clean_channel_title(data.get("title"))
         channel = channel.model_copy(update={"name": name})
-        entries = normalize_entries(data.get("entries"), channel_fallback=channel)
+        entries = normalize_entries(data.get("entries"), channel_fallback=channel,
+                                    signed_in=self.settings.signed_in_configured)
         items, next_offset = self._paginate(entries, offset, limit, self.settings.max_list_results)
         return Page(
             kind="channel",
@@ -82,7 +84,7 @@ class YtDlpDiscoveryProvider:
     async def playlist(self, playlist_id: str, *, offset: int, limit: int) -> Page:
         data = await self._flat(playlist_url(playlist_id), offset=offset, limit=limit, context="playlist")
         owner = channel_from(data)
-        entries = normalize_entries(data.get("entries"))
+        entries = normalize_entries(data.get("entries"), signed_in=self.settings.signed_in_configured)
         items, next_offset = self._paginate(entries, offset, limit, self.settings.max_list_results)
         count = data.get("playlist_count")
         return Page(
@@ -91,6 +93,22 @@ class YtDlpDiscoveryProvider:
             subtitle=owner.name if owner else None,
             channel=owner,
             playlist_id=playlist_id,
+            total_count=count if isinstance(count, int) and count >= 0 else None,
+            items=items,
+            offset=offset,
+            next_offset=next_offset,
+            provider=self.name,
+        )
+
+    async def feed(self, target: str, *, title: str, offset: int, limit: int) -> Page:
+        """A signed-in account feed (``:ytrec``, ``:ytsubs``, ...). ``target`` is a fixed keyword/URL."""
+        data = await self._flat(target, offset=offset, limit=limit, context=f"feed {title}")
+        entries = normalize_entries(data.get("entries"), signed_in=True)
+        items, next_offset = self._paginate(entries, offset, limit, self.settings.max_list_results)
+        count = data.get("playlist_count")
+        return Page(
+            kind="feed",
+            title=title,
             total_count=count if isinstance(count, int) and count >= 0 else None,
             items=items,
             offset=offset,
