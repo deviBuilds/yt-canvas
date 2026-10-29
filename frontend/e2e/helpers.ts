@@ -35,8 +35,8 @@ export async function demoLayout(page: Page, id: string): Promise<DemoLayout> {
 /** Read pixels back from the player's canvas (getImageData) and decode the demo layout. */
 export async function sampleCanvas(page: Page, layout: DemoLayout): Promise<CanvasSample> {
   return page.evaluate((layout) => {
-    const canvas = document.querySelector<HTMLCanvasElement>('[data-testid="video-canvas"]');
-    const video = document.querySelector<HTMLVideoElement>("video.decoder");
+    const canvas = document.querySelector<HTMLCanvasElement & { ytcMedia?: HTMLMediaElement }>('[data-testid="video-canvas"]');
+    const video = canvas?.ytcMedia;
     if (!canvas || !video) throw new Error("player not found");
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("no 2d context");
@@ -92,8 +92,22 @@ export async function framesDrawn(page: Page): Promise<number> {
   return page.evaluate(() => Number(document.querySelector<HTMLCanvasElement>('[data-testid="video-canvas"]')?.dataset.frames ?? 0));
 }
 
+/** The playing source: the engine's source id, or the fallback element's src attribute. */
 export async function currentSrc(page: Page): Promise<string | null> {
-  return page.evaluate(() => document.querySelector<HTMLVideoElement>("video.decoder")?.getAttribute("src") ?? null);
+  return page.evaluate(() => {
+    const media = document.querySelector<HTMLCanvasElement & { ytcMedia?: EventTarget & { src: string } }>('[data-testid="video-canvas"]')?.ytcMedia;
+    if (!media) return null;
+    return (media instanceof HTMLMediaElement ? media.getAttribute("src") : media.src) || null;
+  });
+}
+
+/** "webcodecs" (no media element) or "element" (the hidden-video fallback). */
+export async function engineKind(page: Page): Promise<"webcodecs" | "element" | null> {
+  return page.evaluate(() => {
+    const media = document.querySelector<HTMLCanvasElement & { ytcMedia?: object }>('[data-testid="video-canvas"]')?.ytcMedia;
+    if (!media) return null;
+    return media instanceof HTMLMediaElement ? "element" : "webcodecs";
+  });
 }
 
 /** Move focus off any control so key presses reach the document-level shortcuts. */
@@ -128,7 +142,7 @@ export async function openDemo(page: Page, id: string, query = ""): Promise<Demo
 
 export async function videoState(page: Page) {
   return page.evaluate(() => {
-    const v = document.querySelector<HTMLVideoElement>("video.decoder")!;
+    const v = document.querySelector<HTMLCanvasElement & { ytcMedia: HTMLMediaElement }>('[data-testid="video-canvas"]')!.ytcMedia;
     return { time: v.currentTime, paused: v.paused, seeking: v.seeking, muted: v.muted, volume: v.volume, rate: v.playbackRate };
   });
 }

@@ -1,11 +1,13 @@
 import { getEffect, supportsCanvasFilter, type Effect, type EffectId } from "./effects";
+import { currentImage, type PlaybackMedia } from "./media";
 import { backingSize, type Size } from "./sizing";
 
 /**
- * Draws frames from an HTMLVideoElement into a 2D canvas.
+ * Draws frames into a 2D canvas: VideoFrames from the WebCodecs engine, or the
+ * picture of a hidden video element in browsers without WebCodecs.
  *
- * The video element stays the decoder, audio output and clock; this class
- * only copies pixels. With requestVideoFrameCallback (rVFC) it draws exactly
+ * The media stays the decoder, audio output and clock; this class only copies
+ * pixels. With requestVideoFrameCallback (rVFC) it draws exactly
  * once per presented video frame; elsewhere it falls back to
  * requestAnimationFrame while playing and skips frames whose currentTime
  * hasn't changed.
@@ -57,7 +59,7 @@ export class CanvasRenderer {
   private scratch: HTMLCanvasElement | null = null;
 
   constructor(
-    private readonly video: HTMLVideoElement,
+    private readonly video: PlaybackMedia,
     private readonly canvas: HTMLCanvasElement,
     private readonly options: RendererOptions = {},
   ) {
@@ -139,7 +141,7 @@ export class CanvasRenderer {
 
   private schedule(): void {
     if (this.disposed) return;
-    if (this.mode === "video-frame-callback") {
+    if (this.mode === "video-frame-callback" && this.video.requestVideoFrameCallback) {
       if (this.frameHandle === null) this.frameHandle = this.video.requestVideoFrameCallback(this.onVideoFrame);
     } else if (this.rafHandle === null) {
       this.rafHandle = requestAnimationFrame(this.onAnimationFrame);
@@ -200,6 +202,8 @@ export class CanvasRenderer {
   private draw(mediaTime: number): boolean {
     const video = this.video;
     if (video.readyState < HAVE_CURRENT_DATA || video.videoWidth === 0 || video.videoHeight === 0) return false;
+    const image = currentImage(video);
+    if (!image) return false;
     this.applyBacking(false);
     const { width, height } = this.canvas;
     if (width === 0 || height === 0) return false;
@@ -208,13 +212,13 @@ export class CanvasRenderer {
     const effect = this.effect;
     try {
       if (effect.pixelate) {
-        this.drawPixelated(effect.pixelate, width, height);
+        this.drawPixelated(image, effect.pixelate, width, height);
       } else if (effect.filter && this.filterSupported) {
         ctx.filter = effect.filter;
-        ctx.drawImage(video, 0, 0, width, height);
+        ctx.drawImage(image, 0, 0, width, height);
         ctx.filter = "none";
       } else {
-        ctx.drawImage(video, 0, 0, width, height);
+        ctx.drawImage(image, 0, 0, width, height);
         if (effect.transform) {
           const image = ctx.getImageData(0, 0, width, height);
           effect.transform(image.data);
@@ -233,7 +237,7 @@ export class CanvasRenderer {
     return true;
   }
 
-  private drawPixelated(block: number, width: number, height: number): void {
+  private drawPixelated(image: CanvasImageSource, block: number, width: number, height: number): void {
     const w = Math.max(1, Math.round(width / block));
     const h = Math.max(1, Math.round(height / block));
     const scratch = (this.scratch ??= document.createElement("canvas"));
@@ -243,7 +247,7 @@ export class CanvasRenderer {
     }
     const small = scratch.getContext("2d");
     if (!small) throw new Error("Canvas 2D is not supported in this browser.");
-    small.drawImage(this.video, 0, 0, w, h);
+    small.drawImage(image, 0, 0, w, h);
     this.ctx.imageSmoothingEnabled = false;
     this.ctx.drawImage(scratch, 0, 0, width, height);
     this.ctx.imageSmoothingEnabled = true;

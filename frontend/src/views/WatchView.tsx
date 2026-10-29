@@ -14,9 +14,13 @@ import { Thumbnail, VideoCard } from "../components/VideoCard";
 import { discoveryApi } from "../discovery/api";
 import { useLibrary } from "../library/LibraryContext";
 import { formatBytes, formatTime, formatViews } from "../lib/format";
-import type { ApiError } from "../api/http";
+import { ApiError } from "../api/http";
 import { AmbientGlow } from "../player/AmbientGlow";
 import { selectClass } from "../player/PlayerControls";
+import { CanvasEngine } from "../player/engine/CanvasEngine";
+import { dashSource } from "../player/engine/readers";
+import { useEngineChoice } from "../player/engine/useEngine";
+import type { PlaybackMedia } from "../player/media";
 import { attachStream } from "../player/streaming/StreamLoader";
 import {
   AUTO_HEIGHT,
@@ -191,6 +195,8 @@ export function WatchView() {
   const decoderParam = params.get("decoder") as DecoderStrategy | null;
   const decoderStrategy = decoderParam && DECODER_STRATEGIES.includes(decoderParam) ? decoderParam : "layered";
   const forceFallback = params.get("render") === "raf";
+  // WebCodecs (no <video> in the page) where supported; ?engine=element forces the hidden-video fallback.
+  const engine = useEngineChoice(params.get("engine"));
 
   const ref = useMemo<MediaRef | null>(
     () => (demoId ? { source: "demo", id: demoId } : videoId ? { source: "youtube", id: videoId } : null),
@@ -205,9 +211,13 @@ export function WatchView() {
   const mode: PlaybackMode = forced === "stream" || forced === "download" ? forced : playback.mode;
   // If streaming fails for this video, it falls back to downloading it.
   const [fallback, setFallback] = useState<{ key: string; reason: string } | null>(null);
-  const streaming = mode === "stream" && typeof MediaSource !== "undefined" && fallback?.key !== refKey;
+  const canStreamHere = engine.kind === "webcodecs" || typeof MediaSource !== "undefined";
+  const streaming = mode === "stream" && canStreamHere && fallback?.key !== refKey;
   const stream = useStreamSession(streaming ? ref : null);
-  const picks = useMemo(() => (stream.session ? pickTracks(stream.session, playback.quality) : null), [stream.session, playback.quality]);
+  const picks = useMemo(
+    () => (stream.session ? pickTracks(stream.session, playback.quality, engine.canDecode) : null),
+    [stream.session, playback.quality, engine.canDecode],
+  );
   const prep = usePreparation(streaming ? null : ref);
 
   const queued = ref ? queue.items.find((item) => videoKey(item) === refKey) : undefined;
@@ -301,7 +311,28 @@ export function WatchView() {
     [refKey, stream.renew],
   );
   const attachSource = useCallback(
-    (media: HTMLVideoElement) => (picks ? attachStream(media, { ...picks, onError: onStreamError }) : () => undefined),
+    (media: PlaybackMedia) => {
+      if (!picks) return () => undefined;
+      if (media instanceof CanvasEngine) {
+        media.open(
+          dashSource(picks.session, picks.video, picks.audio, (error) => {
+            onStreamError(
+              error instanceof ApiError
+                ? error
+                : new ApiError(422, {
+                    code: "stream_unavailable",
+                    message: error instanceof Error ? error.message : "Streaming stopped unexpectedly.",
+                    hint: null,
+                    retryable: false,
+                  }),
+            );
+            return true;
+          }),
+        );
+        return () => media.close();
+      }
+      return attachStream(media as HTMLVideoElement, { ...picks, onError: onStreamError });
+    },
     [picks, onStreamError],
   );
   const changeMode = (next: PlaybackMode) => {
@@ -356,7 +387,8 @@ export function WatchView() {
 
   const media = prep.job?.media;
   const streamSrc = streaming && picks ? `stream:${picks.session.session_id}:${picks.video.id}:${picks.audio.id}` : null;
-  const qualities = streamQualities(streaming ? stream.session : null);
+  const qualities = streamQualities(streaming ? stream.session : null, engine.canDecode);
+  const drawnBy = engine.kind === "webcodecs" ? "decoded with WebCodecs, each frame drawn to canvas" : "rendered to canvas";
   const settings = (
     <>
       <div className="flex items-center justify-between gap-3 py-1.5">
@@ -403,6 +435,8 @@ export function WatchView() {
         <div ref={playerArea} className="relative isolate">
           <AmbientGlow container={playerArea} />
           <CanvasPlayer
+            key={engine.kind}
+            engine={engine.kind}
             src={streaming ? streamSrc : prep.mediaUrl}
             attachSource={streaming ? attachSource : undefined}
             settings={settings}
@@ -496,13 +530,13 @@ export function WatchView() {
             {streamSrc && picks ? (
               <p className="mt-1 text-muted-foreground" data-testid="media-details">
                 Streaming {picks.video.height}p · {codecLabel(picks.video.codecs)}/{codecLabel(picks.audio.codecs)}
-                {picks.video.bitrate ? ` · ${(picks.video.bitrate / 1e6).toFixed(1)} Mbps` : ""} · nothing saved to disk ·
-                rendered to canvas
+                {picks.video.bitrate ? ` · ${(picks.video.bitrate / 1e6).toFixed(1)} Mbps` : ""} · nothing saved to disk ·{" "}
+                {drawnBy}
               </p>
             ) : media ? (
               <p className="mt-1 text-muted-foreground" data-testid="media-details">
                 Prepared {media.width}×{media.height} · {media.video_codec?.toUpperCase()}/{media.audio_codec?.toUpperCase()} ·{" "}
-                {PROCESSING_LABELS[media.processing]} · {formatBytes(media.size_bytes)} · rendered to canvas
+                {PROCESSING_LABELS[media.processing]} · {formatBytes(media.size_bytes)} · {drawnBy}
               </p>
             ) : null}
             {ref.source === "demo" ? (

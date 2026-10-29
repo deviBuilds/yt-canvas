@@ -1,6 +1,11 @@
 # yt-canvas
 
-Browse YouTube (search, channels, playlists) and play videos whose **actual decoded frames are drawn into an HTML `<canvas>`**. A hidden `HTMLVideoElement` is the decoder, audio output and clock; frames are copied into Canvas 2D with `requestVideoFrameCallback()`, where an optional visual effect (grayscale, sepia, invert, pixelate) is applied.
+Browse YouTube (search, channels, playlists) and play videos whose **frames are decoded one by one and drawn into an HTML `<canvas>`**. There is no `<video>` element in the page:
+- the compressed video is fetched in byte ranges;
+- WebCodecs (`VideoDecoder`) turns each frame into an image, which Canvas 2D draws, with an optional visual effect (grayscale, sepia, invert, pixelate);
+- the sound is decoded with `AudioDecoder` and played through Web Audio, whose clock keeps the picture in sync.
+
+Browsers without WebCodecs fall back to a hidden `<video>` element as the decoder.
 
 - **Backend:** Python + FastAPI, with `yt-dlp` for discovery and media acquisition and FFmpeg/ffprobe for merging and conversion.
 - **Frontend:** React + TypeScript + Vite, in a YouTube-style layout built with Tailwind CSS v4 and shadcn/ui-style components (Radix primitives, lucide icons), with dark and light themes. Favorites and history live in `localStorage`.
@@ -156,12 +161,8 @@ Streaming plays YouTube's DASH tracks directly, without downloading the whole vi
    - H.264 video (`avc1`, up to 1080p) and AV1 video (`av01`, higher resolutions), in fragmented MP4
    - AAC audio (`mp4a`)
 2. **Range proxy:** `GET /api/streams/{session}/tracks/{track}?start=&end=` fetches just those bytes from YouTube with yt-dlp's request headers and passes them through. Nothing is written to disk, and YouTube's URLs never reach the browser. If YouTube refuses an expired URL, the backend resolves the video again once.
-3. **Browser:**
-   - `frontend/src/player/streaming` reads each track's `moov` (the init segment) and `sidx` (a time-to-byte index of segments a few seconds long).
-   - It feeds a Media Source, keeping about 30 s buffered ahead and dropping what's more than 30 s behind.
-   - A seek fetches the segment that holds the new time.
-   - The Media Source is same-origin, so the canvas stays readable and effects work as before.
-4. **Fallback:** if streaming can't be used, the player switches to **Download first** and says why. Reasons include no compatible tracks, YouTube refusing range reads, or a browser without Media Source.
+3. **Browser:** the canvas engine reads each track's `moov` (the init segment) and `sidx` (a time-to-byte index of segments a few seconds long). It then fetches about 20 s ahead of the playhead and decodes the segments with WebCodecs (see [Canvas playback](#canvas-playback-frontendsrcplayer)). A seek fetches the segment that holds the new time. In the hidden-video fallback, the same segments feed a Media Source instead.
+4. **Fallback:** if streaming can't be used, the player switches to **Download first** and says why. Reasons include no compatible tracks, YouTube refusing range reads, or a browser that can't decode the tracks.
 
 Demo clips stream too, from locally generated H.264/AAC tracks with a segment index, so the browser tests cover both modes offline.
 
@@ -234,6 +235,23 @@ Identical requests share one job; a file already in the cache yields an immediat
 
 ### Canvas playback (`frontend/src/player`)
 
+**Engine** (`player/engine`): the page has no media element.
+- **Demuxing** (`mp4.ts`, our own parser):
+  - `moov` gives the codec configuration WebCodecs needs (`avcC`, `av1C`, the AAC `esds`) and the edit lists.
+  - The samples come from `moof`/`trun` fragments (DASH tracks) or from the `stbl` sample tables (the prepared MP4).
+- **Reading** (`readers.ts`):
+  - DASH tracks are read segment by segment through the stream proxy.
+  - A prepared file is read in GOP-sized windows with HTTP ranges, one request shared by both tracks.
+- **Decoding** (`CanvasEngine.ts`):
+  - `VideoDecoder` produces `VideoFrame`s. At most 6 wait to be shown, and every frame is closed when it is replaced.
+  - `AudioDecoder` produces PCM, scheduled as `AudioBuffer`s on an `AudioContext`.
+- **Clock:** the audio context's time is the master. On every animation frame the latest frame that is due is drawn, shifted by the audio output latency so picture and sound line up.
+- **Buffering:** if decoded audio or video runs out, playback waits (`waiting`) and resumes once enough is decoded.
+- **Seeking:** decoding restarts at the key frame before the target, and frames before the target are dropped.
+- **Media-element interface:** the engine exposes `currentTime`, `play()`/`pause()`, volume, `playbackRate`, `buffered`, media events and `requestVideoFrameCallback`, so the controls and renderer work unchanged.
+- **Choosing the engine:** WebCodecs is used when the browser decodes H.264 and AAC with it (Chromium, Edge, recent Safari, desktop Firefox). Otherwise the hidden-video path below is used, and `?engine=element` forces it.
+- **Known limitation:** playback speeds other than 1× change the pitch, because Web Audio has no time-stretching.
+
 **Rendering** (`CanvasRenderer`, framework-agnostic):
 - With rVFC it draws once per presented frame.
 - Otherwise it uses a `requestAnimationFrame` loop that runs only while playing and skips unchanged frames.
@@ -249,15 +267,15 @@ Identical requests share one job; a file already in the cache yields an immediat
 - They use `ctx.filter` where supported.
 - Otherwise a per-pixel `getImageData` transform is used. That is possible because media is served from the page's own origin (Vite proxies `/api` in development), so the canvas is never tainted.
 
-**Decoder element visibility:**
+**Decoder element visibility** (hidden-video fallback only):
 - The `<video>` sits under the canvas at the same size, with `opacity: 0`, `playsinline`, `aria-hidden` and no PiP or remote playback, so it stays laid out and on screen without ever being visible.
 - `display:none` is deliberately not the default, because browsers differ.
 - A diagnostic e2e test measured all four strategies (`?decoder=layered|covered|offscreen|hidden`). In Chromium 153 (headless), every one kept presenting frames at ~27–31 fps for a 30 fps source.
 - **Other browsers were not tested here**, which is why the conservative layered strategy stays the default.
 
 **Audio and gestures:**
-- The same element persists across source changes.
-- Autoplay is attempted after metadata loads; if the browser blocks it, a "Click to play" overlay supplies the gesture.
+- The same engine (or element) persists across source changes.
+- Autoplay is attempted after metadata loads. If the browser blocks it (the audio context can't start without a gesture), a "Click to play" overlay supplies the gesture.
 - Fullscreen applies to the player wrapper (canvas + HTML controls), falling back to a fixed full-viewport mode where element fullscreen is unavailable (e.g. iPhone).
 
 **State and errors:**
@@ -349,8 +367,8 @@ Browser tests read these pixels back from the canvas.
 ## Tests
 
 ```bash
-make test        # backend pytest (257) + frontend typecheck & vitest (45)
-make e2e         # Playwright, production build, demo media (14 tests, Chromium)
+make test        # backend pytest (378) + frontend typecheck & vitest (56)
+make e2e         # Playwright, production build, demo media (16 tests, Chromium)
 make test-live   # opt-in: real YouTube (backend + browser)
 ```
 
@@ -364,11 +382,13 @@ make test-live   # opt-in: real YouTube (backend + browser)
   - the real FFmpeg pipeline for all three demo samples
   - the YouTube page parser for feeds and related videos (renderer shapes, filtering, durations, view counts, errors)
 - **Frontend unit** (`frontend/src/**/*.test.ts(x)`), against fake media and canvas implementations:
+  - the MP4 demuxer (sample tables, fragments with per-sample flags and composition offsets, `avcC`/`av1C`/`esds` codec strings, edit lists, locating `moov`)
   - the renderer loop (single pending callback, redraw on seek/pause, effects with and without `ctx.filter`, reset, dispose, backing size, rAF fallback)
   - `CanvasPlayer` controls, seeking, source changes, autoplay-blocked flow, errors, buffering, keyboard, unmount
   - sizing, shortcuts, localStorage handling
 - **Browser** (`frontend/e2e`), reading pixels with `getImageData`:
-  - frames change during playback, and the time bar matches `currentTime`
+  - the page has no `<video>` or `<audio>` element, the audio context runs, and frames change during playback with the time bar matching `currentTime`
+  - streaming and Download first both play through WebCodecs
   - a 30 fps draw rate, proving a single loop
   - pause holds the frame and resume continues
   - seeking by slider and keyboard redraws, including while paused
@@ -378,7 +398,7 @@ make test-live   # opt-in: real YouTube (backend + browser)
   - next/previous change the source and the canvas follows the new aspect ratio
   - favorites and continue watching persist and resume
   - invalid or unknown media show clear errors
-  - decoder strategies, plus desktop (1440×900) and mobile (Pixel 7, 412×839 at 2.625× DPR) layouts with no horizontal overflow
+  - the hidden-video fallback (`?engine=element`) with its decoder strategies, plus desktop (1440×900) and mobile (Pixel 7, 412×839 at 2.625× DPR) layouts with no horizontal overflow
 
 **Browser coverage:** only Playwright's Chromium 153 (headless shell, build 1243) was tested. Firefox, Safari/WebKit and real mobile devices were not tested.
 

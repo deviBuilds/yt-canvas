@@ -11,15 +11,18 @@ import {
 import { Play } from "lucide-react";
 
 import { CanvasRenderer } from "./CanvasRenderer";
+import { CanvasEngine } from "./engine/CanvasEngine";
 import type { EffectId } from "./effects";
 import { PlayerControls } from "./PlayerControls";
 import { loadPrefs, PLAYBACK_RATES, savePrefs, type PlayerPrefs } from "./prefs";
 import { actionForKey, type PlayerAction } from "./shortcuts";
+import { clearSource, hasSource, loadUrl, type EngineKind, type PlaybackMedia } from "./media";
 import { fitContain, type Size } from "./sizing";
 import { useMediaState } from "./useMediaState";
 
 /**
- * How the decoding <video> element is kept out of sight.
+ * How the decoding <video> element is kept out of sight. Only used in browsers
+ * without WebCodecs; the WebCodecs engine has no element at all.
  *
  * - "layered" (default): same box as the canvas, underneath it, opacity 0. It
  *   stays laid out and on-screen, so browsers keep decoding and presenting
@@ -40,8 +43,14 @@ export interface CanvasPlayerProps {
    * With ``attachSource`` it only identifies the source: a change re-attaches.
    */
   src: string | null;
-  /** Feed the decoder yourself (e.g. a Media Source stream); returns a detach function. */
-  attachSource?: (video: HTMLVideoElement) => () => void;
+  /** Feed the media yourself (e.g. a stream); returns a detach function. */
+  attachSource?: (media: PlaybackMedia) => () => void;
+  /**
+   * "webcodecs": decode with WebCodecs and draw each frame; the page has no <video>.
+   * "element": a hidden <video> decodes (browsers without WebCodecs). Fixed for the
+   * player's lifetime: remount (``key``) to switch.
+   */
+  engine?: EngineKind;
   /** Extra rows for the settings menu (e.g. playback mode and quality). */
   settings?: ReactNode;
   title?: string;
@@ -79,6 +88,7 @@ export function CanvasPlayer(props: CanvasPlayerProps) {
     decoderStrategy = "layered",
     forceFallback = false,
   } = props;
+  const [engineKind] = useState<EngineKind>(props.engine ?? "element");
 
   const rootRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -90,8 +100,8 @@ export function CanvasPlayer(props: CanvasPlayerProps) {
   const latest = useRef(props);
   latest.current = props;
 
-  // A state-backed ref so hooks re-run once the element exists.
-  const [video, setVideo] = useState<HTMLVideoElement | null>(null);
+  // The media the player drives; state-backed so hooks re-run once it exists.
+  const [video, setVideo] = useState<PlaybackMedia | null>(null);
   const [media, syncMedia] = useMediaState(video);
   const [prefs, setPrefs] = useState<PlayerPrefs>(loadPrefs);
   const prefsRef = useRef(prefs);
@@ -103,12 +113,27 @@ export function CanvasPlayer(props: CanvasPlayerProps) {
   const [drawError, setDrawError] = useState<string | null>(null);
   const [canvasBox, setCanvasBox] = useState<Size>({ width: 0, height: 0 });
 
-  // -- renderer lifecycle: exactly one renderer per (video, canvas) ------------
+  // -- the WebCodecs engine: created here, never part of the DOM ------------------
+  useEffect(() => {
+    if (engineKind !== "webcodecs") return;
+    const engine = new CanvasEngine();
+    setVideo(engine);
+    return () => {
+      engine.dispose();
+      setVideo(null);
+    };
+  }, [engineKind]);
+
+  // -- renderer lifecycle: exactly one renderer per (media, canvas) ------------
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!video || !canvas) return;
-    video.disablePictureInPicture = true;
-    (video as HTMLVideoElement & { disableRemotePlayback?: boolean }).disableRemotePlayback = true;
+    if (video instanceof HTMLVideoElement) {
+      video.disablePictureInPicture = true;
+      (video as HTMLVideoElement & { disableRemotePlayback?: boolean }).disableRemotePlayback = true;
+    }
+    // For tests and debugging: what the canvas is drawn from.
+    (canvas as HTMLCanvasElement & { ytcMedia?: PlaybackMedia }).ytcMedia = video;
     let lastSync = 0;
     const renderer = new CanvasRenderer(video, canvas, {
       effect: prefsRef.current.effect,
@@ -153,7 +178,7 @@ export function CanvasPlayer(props: CanvasPlayerProps) {
 
   // -- playback -----------------------------------------------------------------
   const tryPlay = useCallback(() => {
-    if (!video || !video.getAttribute("src")) return;
+    if (!video || !hasSource(video)) return;
     const attempt = video.play();
     if (!attempt) return;
     attempt.then(
@@ -171,11 +196,7 @@ export function CanvasPlayer(props: CanvasPlayerProps) {
     setNeedsGesture(false);
     setDrawError(null);
     if (!src) {
-      if (video.getAttribute("src")) {
-        video.pause();
-        video.removeAttribute("src");
-        video.load();
-      }
+      clearSource(video);
       return;
     }
     pendingStart.current = latest.current.startTime ?? null;
@@ -190,10 +211,7 @@ export function CanvasPlayer(props: CanvasPlayerProps) {
     video.addEventListener("loadedmetadata", onMetadata, { once: true });
     const attach = latest.current.attachSource;
     const detach = attach ? attach(video) : null;
-    if (!attach) {
-      video.src = src;
-      video.load();
-    }
+    if (!attach) loadUrl(video, src);
     return () => {
       video.removeEventListener("loadedmetadata", onMetadata);
       detach?.();
@@ -203,11 +221,7 @@ export function CanvasPlayer(props: CanvasPlayerProps) {
   // Release the decoder when the player unmounts.
   useEffect(() => {
     if (!video) return;
-    return () => {
-      video.pause();
-      video.removeAttribute("src");
-      video.load();
-    };
+    return () => clearSource(video);
   }, [video]);
 
   useEffect(() => {
@@ -421,7 +435,9 @@ export function CanvasPlayer(props: CanvasPlayerProps) {
       onKeyDown={globalShortcuts ? undefined : (event) => onKey(event.nativeEvent)}
     >
       <div ref={stageRef} className="stage" onClick={onStageClick} onDoubleClick={toggleFullscreen}>
-        <video ref={setVideo} className={`decoder decoder-${decoderStrategy}`} playsInline preload="auto" aria-hidden="true" tabIndex={-1} />
+        {engineKind === "element" ? (
+          <video ref={setVideo} className={`decoder decoder-${decoderStrategy}`} playsInline preload="auto" aria-hidden="true" tabIndex={-1} />
+        ) : null}
         <canvas
           ref={canvasRef}
           className="screen"

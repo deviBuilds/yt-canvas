@@ -45,9 +45,9 @@ export function usePlaybackPrefs(): [PlaybackPrefs, (next: Partial<PlaybackPrefs
 const preference = (track: StreamTrack) => (track.codecs.startsWith("avc1") ? 0 : 1);
 
 /** The best video track at or under the quality cap that this browser can decode, plus an audio track. */
-export function pickTracks(session: StreamSession, quality: Quality): StreamPicks | null {
-  const videos = session.video_tracks.filter(canStream);
-  const audio = session.audio_tracks.find(canStream);
+export function pickTracks(session: StreamSession, quality: Quality, canDecode: (track: StreamTrack) => boolean = canStream): StreamPicks | null {
+  const videos = session.video_tracks.filter(canDecode);
+  const audio = session.audio_tracks.find(canDecode);
   if (videos.length === 0 || !audio) return null;
   const cap = quality === "auto" ? AUTO_HEIGHT : quality;
   const fitting = videos.filter((track) => (track.height ?? 0) <= cap);
@@ -60,9 +60,9 @@ export function pickTracks(session: StreamSession, quality: Quality): StreamPick
 }
 
 /** Heights the browser can stream for this session, highest first. */
-export function streamQualities(session: StreamSession | null): number[] {
+export function streamQualities(session: StreamSession | null, canDecode: (track: StreamTrack) => boolean = canStream): number[] {
   if (!session) return [];
-  const heights = session.video_tracks.filter(canStream).map((track) => track.height ?? 0).filter((h) => h > 0);
+  const heights = session.video_tracks.filter(canDecode).map((track) => track.height ?? 0).filter((h) => h > 0);
   return [...new Set(heights)].sort((a, b) => b - a);
 }
 

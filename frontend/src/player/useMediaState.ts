@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { hasSource, type PlaybackMedia } from "./media";
+
 export type MediaPhase = "empty" | "loading" | "ready" | "error";
 
 export interface MediaState {
@@ -44,12 +46,14 @@ const MEDIA_ERRORS: Record<number, string> = {
   4: "The prepared media is unavailable or in a format your browser can't play.",
 };
 
-export function describeMediaError(error: MediaError | null): string {
+export function describeMediaError(error: PlaybackMedia["error"], media?: PlaybackMedia): string {
   if (!error) return "Playback failed.";
+  // The engine's messages are written for people; a media element's are browser internals.
+  if (media && !(media instanceof HTMLMediaElement) && error.message) return error.message;
   return MEDIA_ERRORS[error.code] ?? "Playback failed.";
 }
 
-function bufferedEndAt(video: HTMLVideoElement): number {
+function bufferedEndAt(video: PlaybackMedia): number {
   const ranges = video.buffered;
   for (let i = 0; i < ranges.length; i++) {
     if (ranges.start(i) <= video.currentTime + 0.5 && video.currentTime <= ranges.end(i)) return ranges.end(i);
@@ -81,8 +85,8 @@ const EVENTS = [
   "resize",
 ] as const;
 
-/** Mirror the decoding element's state into React. ``sync`` can be called for extra updates. */
-export function useMediaState(video: HTMLVideoElement | null): [MediaState, () => void] {
+/** Mirror the media's state into React. ``sync`` can be called for extra updates. */
+export function useMediaState(video: PlaybackMedia | null): [MediaState, () => void] {
   const [state, setState] = useState<MediaState>(INITIAL_MEDIA_STATE);
 
   const snapshot = useCallback(
@@ -120,10 +124,10 @@ export function useMediaState(video: HTMLVideoElement | null): [MediaState, () =
     const onEvent = (event: Event) => {
       switch (event.type) {
         case "loadstart":
-          snapshot({ phase: video.getAttribute("src") ? "loading" : "empty", error: null, waiting: false });
+          snapshot({ phase: hasSource(video) ? "loading" : "empty", error: null, waiting: false });
           break;
         case "emptied":
-          snapshot({ phase: video.getAttribute("src") ? "loading" : "empty", error: null, waiting: false });
+          snapshot({ phase: hasSource(video) ? "loading" : "empty", error: null, waiting: false });
           break;
         case "loadeddata":
         case "canplay":
@@ -141,7 +145,7 @@ export function useMediaState(video: HTMLVideoElement | null): [MediaState, () =
           break;
         case "error":
           // A source-less element reports errors too; only surface real ones.
-          if (video.getAttribute("src")) snapshot({ phase: "error", waiting: false, error: describeMediaError(video.error) });
+          if (hasSource(video)) snapshot({ phase: "error", waiting: false, error: describeMediaError(video.error, video) });
           break;
         default:
           snapshot();
