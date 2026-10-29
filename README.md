@@ -3,7 +3,7 @@
 Browse YouTube (search, channels, playlists) and play videos whose **actual decoded frames are drawn into an HTML `<canvas>`**. A hidden `HTMLVideoElement` is the decoder, audio output and clock; frames are copied into Canvas 2D with `requestVideoFrameCallback()`, where an optional visual effect (grayscale, sepia, invert, pixelate) is applied.
 
 - **Backend:** Python + FastAPI, with `yt-dlp` for discovery and media acquisition and FFmpeg/ffprobe for merging and conversion.
-- **Frontend:** React + TypeScript + Vite, with favorites and history in `localStorage`.
+- **Frontend:** React + TypeScript + Vite, in a YouTube-style layout built with Tailwind CSS v4 and shadcn/ui-style components (Radix primitives, lucide icons), with dark and light themes. Favorites and history live in `localStorage`.
 
 ![Watch page (demo media) rendered into a canvas](docs/screenshots/desktop-watch.png)
 
@@ -81,28 +81,36 @@ Without a runtime, formats go missing or extraction fails. `GET /api/health` and
   - playlists: `/playlist?list=…`
   - channels: `/channel/UC…`, `/@handle`, `/c/…`, `/user/…`, or a bare `@handle`
   - search URLs: `/results?search_query=…`
-- **Home** shows only things that come from you or are clearly labelled, never a personalized feed:
-  - continue watching, favorites, recently watched, recent searches
-  - **topic shortcuts**, labelled as plain keyword searches
-  - a **Demo & test media** shelf of locally generated clips, labelled as not YouTube
+- **Layout:** like YouTube's web app. A top bar with the search box, and a sidebar with Home, your Library (History, Favorites) and Explore (Music, News, Live, Gaming). The sidebar is full width from 1312 px, a 72 px icon rail from 792 px, and a drawer on phones and on the watch page. The appearance menu switches between the device, dark and light themes.
+- **Home** has a row of chips (feeds, recent searches and topic searches), then:
+  - **Continue watching** and **Favorites**, from this browser
+  - shelves from YouTube's **public Music, News, Live and Gaming pages** (see [Home feeds](#home-feeds-and-related-videos))
+  - **More from &lt;channel&gt;** and **Because you searched “…”**, built only from this browser's history. yt-canvas never signs in, so there are no personalized YouTube recommendations.
+- **Search results** use YouTube's list layout; channels and playlists have their own headers with **Play all** (and **Shuffle** for playlists). Every card has a ⋮ menu: add to queue, save to Favorites, remove from history, open on YouTube.
 - **Watch page:** the canvas player has:
-  - play/pause, seek, volume/mute, speed (0.25–2×), fullscreen, previous/next
-  - an effect toggle plus an effect menu
-  - an "Up next" queue with autoplay
+  - play/pause, seek, volume/mute, previous/next and fullscreen, plus a settings gear with speed (0.25–2×) and the visual effect
+  - an effect toggle (the ✦ button)
+  - an "Up next" panel for the queue or playlist, with autoplay, above YouTube's related videos (or more from the channel when those aren't available). When the queue runs out, "next" and autoplay continue with the first related video.
   - keyboard shortcuts: Space/K, ←/→, J/L, ↑/↓, M, F, G, `<`/`>`, 0–9, Shift+N/P
+- **Demo media** is hidden from the UI; open `/demo` to play the locally generated clips.
 - **Load more** appears only when the provider actually reported another page.
 
 ## How it works
 
 ```
 frontend/src/
+  components/   cards, shelves, chips, app shell; ui/ holds the shadcn-style primitives
+  feeds/        home feeds and related videos (API client, feed list)
+  views/        Home, Feed, Search, Channel, Playlist, Watch, Library/History/Favorites, Demo
+  theme/        device/dark/light theme (public/theme-init.js applies it before first paint)
   discovery/    API client + paged results hook (search, channel, playlist)
   preparation/  job API, polling hook, progress/errors panel
   player/       CanvasRenderer (frame loop), CanvasPlayer (component), controls, effects, sizing
   library/      favorites / history / recent searches (localStorage)
   queue/        playback queue (sessionStorage)
 backend/app/
-  discovery/    DiscoveryProvider interface, yt-dlp flat provider, normalization, TTL cache
+  discovery/    DiscoveryProvider interface, yt-dlp flat provider, normalization, TTL cache,
+                youtube_pages.py (home feeds and related videos from YouTube's public pages)
   media/        source providers (YouTube, demo), format selection, FFmpeg processing,
                 job manager, storage/eviction/leases, byte-range delivery
   validation.py URL/ID parsing; canonical URLs are rebuilt from validated IDs
@@ -121,6 +129,19 @@ Flat extraction never resolves streams, so rendering results downloads nothing.
 - **Pagination is real:** each page is fetched with `--playlist-items offset+1:offset+limit+1`, and the extra item tells whether another page exists. Pages are 20 items, search is capped at 100 results and lists at 500.
 - **Metadata cache:** results are cached for 10 minutes (LRU, 256 entries), and concurrent identical requests share one yt-dlp call.
 - **Tolerant normalization:** missing durations, thumbnails or channel fields are handled. Thumbnails are restricted to YouTube image hosts, falling back to `i.ytimg.com/vi/<id>/hqdefault.jpg`. Private or deleted entries stay listed but are marked unavailable.
+
+### Home feeds and related videos
+
+YouTube retired its Trending page: `/feed/trending` and `/feed/explore` now redirect to the home page, and a logged-out home page has no videos. yt-dlp also returns nothing for YouTube's topic channels. Their public pages do carry curated shelves, though, so `backend/app/discovery/youtube_pages.py` reads them directly:
+
+- **Pages:** a fixed list, never a user-supplied URL. They are fetched over HTTPS **without cookies or sign-in**: Music (`UC-9-kyTW8ZkZNDHQJ6FgpwQ`), News (`UCYfdidRxbB8Qhf0Nx7ioOYw`), Live (`UC4R8DWoMoI7CAwX8_LjQHig`) and `youtube.com/gaming`.
+- **Parsing:** the `ytInitialData` JSON embedded in each page is walked for shelves. `videoRenderer`, `gridVideoRenderer`, `compactVideoRenderer` and `lockupViewModel` items are normalized into the same `VideoSummary` as search results, plus `published_text` and the channel's `avatar_url`.
+- **Filtering:** only playable videos are kept. Live-now and upcoming streams, Shorts, playlists, mixes, albums and members-only videos are dropped, and so are shelves left empty. Music's "New & Trending Songs" and "Top Charts" shelves are all playlists, so they don't appear.
+- **Related videos:** they come from the logged-out watch page's `secondaryResults`.
+- **Caching and errors:** results are cached for 10 minutes (`YTC_METADATA_CACHE_TTL`); failures are not cached. A consent or verification redirect becomes `youtube_blocked`.
+- **Turning it off:** `YTC_ENABLE_FEEDS=false` keeps the server off these pages. The UI then hides the feed shelves and Explore links, and the watch page falls back to more from the channel. The e2e suite runs this way.
+
+This depends on YouTube's page structure, which changes without notice. The parser tolerates several renderer shapes, and `make test-live` checks it against the real pages.
 
 ### Media preparation (the MVP prepares before playback)
 
@@ -220,6 +241,9 @@ Identical requests share one job; a file already in the cache yields an immediat
 | `GET /api/search?q=&offset=` | Keyword search page |
 | `GET /api/channel?ref=&offset=` | Channel uploads (`UC…`, `@handle`, `c/…`, `user/…`) |
 | `GET /api/playlist?id=&offset=` | Playlist entries |
+| `GET /api/feeds` | The home feeds on offer (`[]` when `YTC_ENABLE_FEEDS=false`) |
+| `GET /api/feeds/{music\|news\|live\|gaming}` | A feed as titled shelves of videos |
+| `GET /api/related/{video_id}` | Related videos for the watch page |
 | `GET /api/demo`, `GET /api/demo/{id}/layout` | Demo samples and their pixel layout |
 | `POST /api/jobs` `{source: "youtube"\|"demo", id}` | Create or join a preparation job (201 new, 200 existing) |
 | `GET /api/jobs/{id}` / `DELETE /api/jobs/{id}` | Job status / cancel |
@@ -233,7 +257,7 @@ Raw yt-dlp and FFmpeg output stays in the backend log with URL query strings red
 
 ## Demo / test media
 
-`YTC_ENABLE_DEMO=true` (the default) exposes three clips that FFmpeg generates locally, always labelled **DEMO** in the API and UI. Each is encoded differently, so both pipeline paths get exercised:
+`YTC_ENABLE_DEMO=true` (the default) exposes three clips that FFmpeg generates locally, always labelled **DEMO** in the API and UI. They aren't linked from the UI: open `/demo` to play them. Each is encoded differently, so both pipeline paths get exercised:
 
 | Clip | Source encoding | Pipeline path |
 |---|---|---|
@@ -253,7 +277,7 @@ Browser tests read these pixels back from the canvas.
 ## Tests
 
 ```bash
-make test        # backend pytest (192) + frontend typecheck & vitest (45)
+make test        # backend pytest (257) + frontend typecheck & vitest (45)
 make e2e         # Playwright, production build, demo media (14 tests, Chromium)
 make test-live   # opt-in: real YouTube (backend + browser)
 ```
@@ -266,6 +290,7 @@ make test-live   # opt-in: real YouTube (backend + browser)
   - byte ranges (partial, suffix, clamped, unsatisfiable, malformed, multi-range, `If-Range`, `HEAD`, leases, unsafe IDs)
   - cache LRU/TTL/leases and discovery cache coalescing
   - the real FFmpeg pipeline for all three demo samples
+  - the YouTube page parser for feeds and related videos (renderer shapes, filtering, durations, view counts, errors)
 - **Frontend unit** (`frontend/src/**/*.test.ts(x)`), against fake media and canvas implementations:
   - the renderer loop (single pending callback, redraw on seek/pause, effects with and without `ctx.filter`, reset, dispose, backing size, rAF fallback)
   - `CanvasPlayer` controls, seeking, source changes, autoplay-blocked flow, errors, buffering, keyboard, unmount
@@ -293,6 +318,14 @@ make test-live   # opt-in: real YouTube (backend + browser)
   - Format resolution worked at first: the EJS challenge solver ran via Deno, and 720p H.264 + stereo AAC was chosen for a remux. The googlevideo media download then returned **HTTP 403** (reported as `download_forbidden`).
   - Later attempts got HTTP 429 and **"Sign in to confirm you're not a bot"** (reported as `youtube_blocked`).
   - So **end-to-end playback of a real YouTube video could not be demonstrated from this environment**. It was not faked with fixtures. The likely cause is YouTube restricting this datacenter network; it should be re-checked from a residential or otherwise unrestricted network with `make test-live`.
+
+### Results on 2026-10-28 (macOS 27 on Apple Silicon, home network)
+
+- **Passed:** backend 257 (8 live tests skipped), vitest 45, and Playwright 14 (1 live test skipped).
+- **Live YouTube:** `make test-live` passed.
+  - **Backend:** search, channels and playlists listed; the Music and News feeds returned shelves; related videos returned 20 items. `aqz-KE-bpKQ` went `resolving → downloading → ready`.
+  - **Browser:** searched, opened "Big Buck Bunny 60fps 4K", prepared it (`queued → resolving → downloading → processing`) and drew advancing frames on the canvas.
+  - So the cloud sandbox's 403/429 came from its network. Real playback works from a normal connection.
 
 ## Limitations
 

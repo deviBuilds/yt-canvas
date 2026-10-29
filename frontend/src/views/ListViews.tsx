@@ -1,32 +1,51 @@
+import { ExternalLink, ListVideo, Play, Shuffle } from "lucide-react";
 import { useCallback, useEffect } from "react";
 
+import { ChannelAvatar } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+
 import type { VideoSummary } from "../api/types";
-import { Icon } from "../components/Icon";
 import { EmptyState } from "../components/StateViews";
 import { PagedResults } from "../components/VideoGrid";
+import { Thumbnail } from "../components/VideoCard";
 import { discoveryApi } from "../discovery/api";
 import { usePagedQuery } from "../discovery/usePagedQuery";
 import { useLibrary } from "../library/LibraryContext";
 import { useQueue } from "../queue/QueueContext";
 import { channelPath, Link, useRouter, watchPath } from "../router/router";
 
-function PlayAllButton({ items, label, listId }: { items: VideoSummary[]; label: string; listId?: string | null }) {
+const playableOnly = (items: VideoSummary[]) =>
+  items.filter((item) => item.available && item.live_status !== "is_live" && item.live_status !== "is_upcoming");
+
+function PlayAllButton({
+  items,
+  label,
+  listId,
+  variant = "primary",
+  shuffle = false,
+}: {
+  items: VideoSummary[];
+  label: string;
+  listId?: string | null;
+  variant?: "primary" | "secondary";
+  shuffle?: boolean;
+}) {
   const queue = useQueue();
   const { navigate } = useRouter();
-  const playable = items.filter((item) => item.available && item.live_status !== "is_live" && item.live_status !== "is_upcoming");
+  const playable = playableOnly(items);
   if (playable.length === 0) return null;
   return (
-    <button
-      type="button"
-      className="button"
+    <Button
+      variant={variant}
       onClick={() => {
-        const first = playable[0]!;
-        queue.playList(playable, first, { label, listId });
+        const list = shuffle ? [...playable].sort(() => Math.random() - 0.5) : playable;
+        const first = list[0]!;
+        queue.playList(list, first, { label, listId });
         navigate(watchPath(first, { list: listId }));
       }}
     >
-      <Icon name="play" size={18} /> Play all
-    </button>
+      {shuffle ? <Shuffle /> : <Play className="fill-current" />} {shuffle ? "Shuffle" : "Play all"}
+    </Button>
   );
 }
 
@@ -44,16 +63,20 @@ export function SearchView() {
   if (!q) return <EmptyState title="Search YouTube">Type keywords or paste a link in the search bar above.</EmptyState>;
 
   return (
-    <div className="list-view">
-      <header className="list-header">
-        <div>
-          <p className="eyebrow">Search results</p>
-          <h1>“{q}”</h1>
-          <p className="muted small">YouTube keyword results, loaded one page at a time.</p>
-        </div>
-        <PlayAllButton items={state.items} label={`Search: ${q}`} />
+    <div className="mx-auto max-w-[1096px] px-4 py-4 sm:px-6">
+      <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <h1 className="sr-only">Search results for “{q}”</h1>
+        <p className="text-sm text-muted-foreground" aria-hidden="true">
+          Results for <span className="font-medium text-foreground">“{q}”</span>
+        </p>
+        <PlayAllButton items={state.items} label={`Search: ${q}`} variant="secondary" />
       </header>
-      <PagedResults state={state} emptyTitle="No results" emptyBody={<>Nothing matched “{q}”. Try different keywords.</>} />
+      <PagedResults
+        state={state}
+        variant="list"
+        emptyTitle="No results found"
+        emptyBody={<>Nothing matched “{q}”. Try different keywords or remove search filters.</>}
+      />
     </div>
   );
 }
@@ -65,31 +88,35 @@ export function ChannelView() {
   const state = usePagedQuery(ref ? `channel:${ref}` : null, fetcher);
   const channel = state.page?.channel;
   const name = channel?.name ?? state.page?.title ?? ref;
+  const avatar = channel?.avatar_url ?? state.items.find((v) => v.channel?.avatar_url)?.channel?.avatar_url;
   const external = ref.startsWith("UC") ? `https://www.youtube.com/channel/${ref}` : `https://www.youtube.com/${ref}`;
 
   if (!ref) return <EmptyState title="No channel selected" />;
 
   return (
-    <div className="list-view">
-      <header className="list-header">
-        <div className="channel-head">
-          <div className="avatar" aria-hidden="true">
-            {(name.replace(/^@/, "")[0] ?? "?").toUpperCase()}
-          </div>
-          <div>
-            <p className="eyebrow">Channel</p>
-            <h1>{name}</h1>
-            <p className="muted small">
-              {channel?.handle ?? ref} ·{" "}
-              <a href={external} target="_blank" rel="noreferrer noopener" className="text-link">
-                Open on YouTube <Icon name="external" size={14} />
+    <div className="mx-auto max-w-[1284px] px-4 sm:px-6">
+      <header className="flex flex-col items-center gap-4 py-6 text-center sm:flex-row sm:items-center sm:gap-6 sm:text-left">
+        <ChannelAvatar name={name} src={avatar} className="size-24 text-4xl sm:size-40 sm:text-6xl" />
+        <div className="min-w-0 flex-1">
+          <p className="sr-only">Channel</p>
+          <h1 className="text-3xl font-bold sm:text-4xl">{name}</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {channel?.handle ?? ref}
+            {state.page?.total_count ? ` • ${state.page.total_count} videos` : ""}
+          </p>
+          <div className="mt-4 flex flex-wrap justify-center gap-2 sm:justify-start">
+            <PlayAllButton items={state.items} label={`Channel: ${name}`} />
+            <Button asChild variant="secondary">
+              <a href={external} target="_blank" rel="noreferrer noopener">
+                <ExternalLink /> Open on YouTube
               </a>
-            </p>
+            </Button>
           </div>
         </div>
-        <PlayAllButton items={state.items} label={`Channel: ${name}`} />
       </header>
-      <h2 className="section-title">Videos</h2>
+      <div className="mb-6 flex gap-6 border-b border-border">
+        <h2 className="border-b-2 border-foreground pb-3 text-base font-medium">Videos</h2>
+      </div>
       <PagedResults state={state} emptyTitle="No videos" emptyBody="This channel has no public videos to list." />
     </div>
   );
@@ -104,33 +131,47 @@ export function PlaylistView() {
   const page = state.page;
   const title = page?.title ?? "Playlist";
   const owner = page?.channel;
+  const cover = state.items.find((v) => v.thumbnail_url);
 
   if (!listId) return <EmptyState title="No playlist selected" />;
 
   return (
-    <div className="list-view">
-      <header className="list-header">
-        <div>
-          <p className="eyebrow">Playlist</p>
-          <h1>{title}</h1>
-          <p className="muted small">
-            {owner?.ref ? (
-              <Link to={channelPath(owner.ref)} className="text-link">
-                {owner.name ?? owner.ref}
-              </Link>
-            ) : (
-              owner?.name
-            )}
-            {page?.total_count !== null && page?.total_count !== undefined ? ` · ${page.total_count} videos` : ""}
-          </p>
+    <div className="mx-auto flex max-w-[1284px] flex-col gap-6 px-4 py-4 sm:px-6 lg:flex-row lg:items-start">
+      <header className="relative overflow-hidden rounded-2xl bg-gradient-to-b from-zinc-600 to-zinc-900 p-6 text-white lg:sticky lg:top-20 lg:w-90 lg:shrink-0">
+        {cover ? (
+          <Thumbnail video={cover} className="mb-4 shadow-lg" />
+        ) : (
+          <div className="mb-4 grid aspect-video place-items-center rounded-xl bg-black/30" aria-hidden="true">
+            <ListVideo className="size-10" />
+          </div>
+        )}
+        <p className="sr-only">Playlist</p>
+        <h1 className="text-2xl font-bold leading-tight">{title}</h1>
+        <p className="mt-3 text-sm font-medium">
+          {owner?.ref ? (
+            <Link to={channelPath(owner.ref)} className="hover:underline">
+              {owner.name ?? owner.ref}
+            </Link>
+          ) : (
+            owner?.name
+          )}
+        </p>
+        <p className="mt-1 text-xs text-white/70">
+          {page?.total_count !== null && page?.total_count !== undefined ? `${page.total_count} videos` : "Playlist"}
+        </p>
+        <div className="mt-4 flex gap-2 [&_button]:flex-1">
+          <PlayAllButton items={state.items} label={title} listId={listId} />
+          <PlayAllButton items={state.items} label={title} listId={listId} variant="secondary" shuffle />
         </div>
-        <PlayAllButton items={state.items} label={title} listId={listId} />
       </header>
-      <PagedResults
-        state={state}
-        emptyTitle="This playlist is empty"
-        onPlay={(video) => queue.playList(state.items, video, { label: title, listId })}
-      />
+      <div className="min-w-0 flex-1">
+        <PagedResults
+          state={state}
+          variant="list"
+          emptyTitle="This playlist is empty"
+          onPlay={(video) => queue.playList(state.items, video, { label: title, listId })}
+        />
+      </div>
     </div>
   );
 }

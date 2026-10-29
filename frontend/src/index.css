@@ -1,0 +1,375 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "@fontsource/roboto/400.css";
+@import "@fontsource/roboto/500.css";
+@import "@fontsource/roboto/700.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* YouTube-like tokens, measured from youtube.com (light first, .dark overrides). */
+:root {
+  color-scheme: light;
+  --background: #ffffff;
+  --foreground: #0f0f0f;
+  --muted-foreground: #606060;
+  --secondary: rgba(0, 0, 0, 0.05);
+  --secondary-hover: rgba(0, 0, 0, 0.1);
+  --border: rgba(0, 0, 0, 0.1);
+  --popover: #ffffff;
+  --input-border: #c6c6c6;
+  --input-bg: #ffffff;
+  --search-button: #f8f8f8;
+  --chip-active: #0f0f0f;
+  --chip-active-foreground: #ffffff;
+  --skeleton: rgba(0, 0, 0, 0.08);
+  --link: #065fd4;
+  --brand: #ff0033;
+  --overlay: rgba(0, 0, 0, 0.6);
+  --danger: #cc0000;
+}
+
+.dark {
+  color-scheme: dark;
+  --background: #0f0f0f;
+  --foreground: #f1f1f1;
+  --muted-foreground: #aaaaaa;
+  --secondary: rgba(255, 255, 255, 0.1);
+  --secondary-hover: rgba(255, 255, 255, 0.2);
+  --border: rgba(255, 255, 255, 0.2);
+  --popover: #282828;
+  --input-border: #303030;
+  --input-bg: #121212;
+  --search-button: #222222;
+  --chip-active: #f1f1f1;
+  --chip-active-foreground: #0f0f0f;
+  --skeleton: rgba(255, 255, 255, 0.1);
+  --link: #3ea6ff;
+  --danger: #ff6b6b;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-hover: var(--secondary-hover);
+  --color-border: var(--border);
+  --color-popover: var(--popover);
+  --color-input-border: var(--input-border);
+  --color-input-bg: var(--input-bg);
+  --color-search-button: var(--search-button);
+  --color-chip-active: var(--chip-active);
+  --color-chip-active-foreground: var(--chip-active-foreground);
+  --color-skeleton: var(--skeleton);
+  --color-link: var(--link);
+  --color-brand: var(--brand);
+  --color-overlay: var(--overlay);
+  --color-danger: var(--danger);
+  --font-sans: "Roboto", "Arial", sans-serif;
+  --breakpoint-guide: 1312px;
+  --breakpoint-rail: 792px;
+}
+
+@layer base {
+  *,
+  ::before,
+  ::after {
+    border-color: var(--border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-size: 14px;
+    line-height: 1.43;
+    min-height: 100vh;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--link);
+    outline-offset: 2px;
+  }
+
+  code,
+  kbd {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.9em;
+  }
+}
+
+/* ---- canvas player --------------------------------------------------------
+   Plain CSS: the decoder strategies and the range inputs need selectors that
+   utility classes can't express. */
+
+@layer components {
+  .player {
+    position: relative;
+    background: #000;
+    overflow: hidden;
+    isolation: isolate;
+    color: #fff;
+    border-radius: var(--player-radius, 12px);
+  }
+
+  .stage {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    max-height: calc(100vh - 56px - 120px);
+    min-height: 200px;
+    background: #000;
+    overflow: hidden;
+    cursor: pointer;
+  }
+
+  .screen {
+    position: relative;
+    z-index: 1;
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    background: #000;
+  }
+
+  /* The decoding <video> element. It must never be visible (see DecoderStrategy). */
+  .decoder {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .decoder-layered {
+    opacity: 0;
+  }
+
+  .decoder-covered {
+    opacity: 1;
+  }
+
+  .decoder-offscreen {
+    position: fixed;
+    inset: auto;
+    left: -10000px;
+    top: 0;
+    width: 2px;
+    height: 2px;
+    opacity: 0;
+  }
+
+  .decoder-hidden {
+    display: none;
+  }
+
+  .stage-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    display: grid;
+    place-items: center;
+    padding: 16px;
+    background: rgba(0, 0, 0, 0.72);
+    cursor: default;
+    overflow-y: auto;
+  }
+
+  .stage-overlay.passive {
+    background: transparent;
+    pointer-events: none;
+  }
+
+  .stage-badge {
+    position: absolute;
+    z-index: 2;
+    top: 34px; /* below the demo clips' 24 px time bar */
+    left: 12px;
+    pointer-events: none;
+  }
+
+  /* Controls float over the bottom of the picture, YouTube-style. */
+  .controls {
+    position: absolute;
+    inset: auto 0 0 0;
+    z-index: 4;
+    padding: 0 12px 4px;
+    background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.75));
+    transition: opacity 200ms ease;
+  }
+
+  .player[data-idle="true"] .controls:not(:has(:focus-visible)):not(:has([data-open="true"])) {
+    opacity: 0;
+  }
+
+  .player[data-idle="true"] .stage {
+    cursor: none;
+  }
+
+  .player.is-fullscreen,
+  .player.pseudo-fullscreen {
+    border-radius: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .player.pseudo-fullscreen {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+  }
+
+  .player.is-fullscreen .stage,
+  .player.pseudo-fullscreen .stage {
+    flex: 1;
+    aspect-ratio: auto;
+    max-height: none;
+    height: auto;
+  }
+
+  /* range inputs (seek and volume) */
+  .range {
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+    cursor: pointer;
+    margin: 0;
+    display: block;
+  }
+
+  .range:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+
+  .range::-webkit-slider-runnable-track {
+    height: var(--track, 3px);
+    border-radius: 999px;
+    background: linear-gradient(
+      90deg,
+      var(--fill, #fff) var(--progress, 0%),
+      rgba(255, 255, 255, 0.4) var(--progress, 0%) var(--buffered, var(--progress, 0%)),
+      rgba(255, 255, 255, 0.2) var(--buffered, var(--progress, 0%))
+    );
+    transition: height 100ms ease;
+  }
+
+  .range::-moz-range-track {
+    height: var(--track, 3px);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.2);
+  }
+
+  .range::-moz-range-progress {
+    height: var(--track, 3px);
+    border-radius: 999px;
+    background: var(--fill, #fff);
+  }
+
+  .range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 13px;
+    height: 13px;
+    margin-top: calc((var(--track, 3px) - 13px) / 2);
+    border-radius: 50%;
+    background: var(--fill, #fff);
+    border: 0;
+    transform: scale(var(--thumb, 1));
+    transition: transform 100ms ease;
+  }
+
+  .range::-moz-range-thumb {
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: var(--fill, #fff);
+    border: 0;
+    transform: scale(var(--thumb, 1));
+  }
+
+  .seek-input {
+    --fill: var(--brand);
+    --thumb: 0;
+    width: 100%;
+    height: 16px;
+  }
+
+  .seek-input:hover,
+  .seek-input:focus-visible {
+    --track: 5px;
+    --thumb: 1;
+  }
+
+  .volume-input {
+    width: 64px;
+  }
+
+  .spinner {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 4px solid rgba(255, 255, 255, 0.2);
+    border-top-color: #fff;
+    animation: spin 0.8s linear infinite;
+  }
+
+  .spinner.small {
+    width: 18px;
+    height: 18px;
+    border-width: 2px;
+    border-color: color-mix(in srgb, currentColor 25%, transparent);
+    border-top-color: currentColor;
+  }
+
+  .indeterminate-bar {
+    animation: indeterminate 1.3s infinite ease-in-out;
+  }
+
+  /* Locally generated demo clips have no thumbnails. */
+  .thumb-demo {
+    background: repeating-linear-gradient(135deg, #1b1f2a 0 14px, #232838 14px 28px);
+  }
+
+  .thumb-demo.demo-bars {
+    background: linear-gradient(90deg, #c0c0c0 0 14%, #c0c000 14% 28%, #00c0c0 28% 42%, #00c000 42% 57%, #c000c0 57% 71%, #c00000 71% 85%, #0000c0 85%);
+  }
+
+  .thumb-demo.demo-vertical {
+    background: radial-gradient(circle at 30% 30%, #3fc8ff 0 18%, transparent 19%), radial-gradient(circle at 70% 60%, #3fc8ff 0 12%, transparent 13%), #101830;
+  }
+
+  .thumb-demo.demo-sweep {
+    background: linear-gradient(90deg, #ff3b3b, #ffd23b, #3bff6b, #3bc8ff, #9b3bff);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes indeterminate {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

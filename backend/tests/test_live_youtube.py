@@ -51,6 +51,32 @@ def test_live_channel_and_playlist(client):
     assert playlist.json()["items"]
 
 
+@pytest.mark.parametrize("feed_id", ["music", "news", "live", "gaming"])
+def test_live_feeds(client, feed_id):
+    response = client.get(f"/api/feeds/{feed_id}")
+    assert response.status_code == 200, response.text
+    shelves = response.json()["shelves"]
+    items = [item for shelf in shelves for item in shelf["items"]]
+    summary = "; ".join(f"{shelf['title']}: {len(shelf['items'])}" for shelf in shelves)
+    print(f"\n{feed_id}: {len(shelves)} shelves, {len(items)} videos ({summary})")
+    assert all(shelf["items"] for shelf in shelves), "empty shelves must be dropped"
+    for item in items:
+        assert len(item["id"]) == 11 and item["title"] and item["thumbnail_url"]
+        assert item["live_status"] not in ("is_live", "is_upcoming"), item
+    if feed_id in ("music", "news"):
+        assert any(len(shelf["items"]) >= 5 for shelf in shelves), f"no {feed_id} shelf has 5+ playable videos"
+
+
+def test_live_related(client):
+    response = client.get(f"/api/related/{VIDEO_ID}")
+    assert response.status_code == 200, response.text
+    items = response.json()["items"]
+    print(f"\nrelated to {VIDEO_ID}: {len(items)} videos, e.g. {[item['title'] for item in items[:3]]}")
+    assert items, "the logged-out watch page carried no related videos"
+    assert VIDEO_ID not in {item["id"] for item in items}
+    assert all(item["live_status"] not in ("is_live", "is_upcoming") for item in items)
+
+
 def test_live_preparation(client):
     job = client.post("/api/jobs", json={"source": "youtube", "id": VIDEO_ID}).json()
     deadline = time.monotonic() + 900

@@ -8,6 +8,8 @@ export interface ChannelInfo {
   id: string | null;
   handle: string | null;
   name: string | null;
+  /** Set for channels found on YouTube's pages (feeds, related videos). */
+  avatar_url?: string | null;
 }
 
 export interface VideoSummary {
@@ -21,6 +23,8 @@ export interface VideoSummary {
   live_status: LiveStatus | null;
   available: boolean;
   unavailable_reason: string | null;
+  /** e.g. "2 hours ago"; only YouTube's pages provide it, not yt-dlp. */
+  published_text?: string | null;
 }
 
 export type PageKind = "search" | "channel" | "playlist" | "demo";
@@ -35,6 +39,26 @@ export interface Page {
   items: VideoSummary[];
   offset: number;
   next_offset: number | null;
+  provider: string;
+  cached: boolean;
+}
+
+export interface FeedInfo {
+  id: string;
+  title: string;
+}
+
+export interface Shelf {
+  /** Some shelves on YouTube's pages have no heading. */
+  title: string | null;
+  items: VideoSummary[];
+}
+
+/** A public YouTube topic page (music, news, ...) as shelves of videos. */
+export interface Feed {
+  id: string;
+  title: string;
+  shelves: Shelf[];
   provider: string;
   cached: boolean;
 }

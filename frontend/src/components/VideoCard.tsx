@@ -1,39 +1,156 @@
-import { useState, type CSSProperties } from "react";
+import { EllipsisVertical, ExternalLink, Heart, ListPlus, Play, Trash2 } from "lucide-react";
+import { useState, type ReactNode } from "react";
+
+import { ChannelAvatar } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
 
 import type { VideoSummary } from "../api/types";
 import { useLibrary } from "../library/LibraryContext";
 import { formatTime, formatViews } from "../lib/format";
 import { useQueue } from "../queue/QueueContext";
 import { channelPath, Link, watchPath } from "../router/router";
-import { Icon } from "./Icon";
 
-export function Thumbnail({ video, progress }: { video: VideoSummary; progress?: number | null }) {
+const isLive = (video: VideoSummary) => video.live_status === "is_live" || video.live_status === "is_upcoming";
+
+export function Thumbnail({
+  video,
+  progress,
+  className,
+}: {
+  video: VideoSummary;
+  progress?: number | null;
+  className?: string;
+}) {
   const [failed, setFailed] = useState(false);
-  const live = video.live_status === "is_live" || video.live_status === "is_upcoming";
+  const live = isLive(video);
   return (
-    <div className="thumb">
+    <div className={cn("thumb relative aspect-video w-full overflow-hidden rounded-xl bg-skeleton", className)}>
       {video.source === "demo" ? (
-        <div className={`thumb-demo demo-${video.id}`} aria-hidden="true">
-          <span>DEMO</span>
+        <div className={`thumb-demo demo-${video.id} absolute inset-0 grid place-items-center`} aria-hidden="true">
+          <span className="rounded bg-black/70 px-2 py-0.5 text-xs font-bold tracking-[0.2em] text-white">DEMO</span>
         </div>
       ) : video.thumbnail_url && !failed ? (
-        <img src={video.thumbnail_url} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
+        <img
+          src={video.thumbnail_url}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          className="absolute inset-0 size-full object-cover"
+          onError={() => setFailed(true)}
+        />
       ) : (
-        <div className="thumb-fallback" aria-hidden="true">
-          <Icon name="play" size={32} />
+        <div className="absolute inset-0 grid place-items-center text-muted-foreground" aria-hidden="true">
+          <Play className="size-8" />
         </div>
       )}
       {live ? (
-        <span className="badge live">{video.live_status === "is_live" ? "LIVE" : "UPCOMING"}</span>
+        <span className="absolute bottom-1 right-1 rounded bg-brand px-1 text-xs font-medium leading-[18px] text-white">
+          {video.live_status === "is_live" ? "LIVE" : "UPCOMING"}
+        </span>
       ) : video.duration_seconds ? (
-        <span className="badge">{formatTime(video.duration_seconds)}</span>
+        <span className="absolute bottom-1 right-1 rounded bg-overlay px-1 text-xs font-medium leading-[18px] text-white">
+          {formatTime(video.duration_seconds)}
+        </span>
       ) : null}
       {progress && progress > 0 ? (
-        <span className="thumb-progress" style={{ "--value": `${Math.min(100, progress * 100)}%` } as CSSProperties} />
+        <span className="absolute inset-x-0 bottom-0 h-1 bg-white/40" aria-hidden="true">
+          <span className="block h-full bg-brand" style={{ width: `${Math.min(100, progress * 100)}%` }} />
+        </span>
       ) : null}
     </div>
   );
 }
+
+function CardMenu({ video, onRemove, removeLabel }: { video: VideoSummary; onRemove?: () => void; removeLabel: string }) {
+  const library = useLibrary();
+  const queue = useQueue();
+  const favorite = library.isFavorite(video);
+  const queued = queue.contains(video);
+  return (
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Action menu"
+          className="-mr-2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100"
+        >
+          <EllipsisVertical />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem disabled={queued} onSelect={() => queue.enqueue(video)}>
+          <ListPlus /> {queued ? "Already in queue" : "Add to queue"}
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => library.toggleFavorite(video)}>
+          <Heart className={cn(favorite && "fill-current")} /> {favorite ? "Remove from Favorites" : "Save to Favorites"}
+        </DropdownMenuItem>
+        {onRemove ? (
+          <DropdownMenuItem onSelect={onRemove}>
+            <Trash2 /> {removeLabel}
+          </DropdownMenuItem>
+        ) : null}
+        {video.source === "youtube" ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem asChild>
+              <a href={`https://www.youtube.com/watch?v=${video.id}`} target="_blank" rel="noreferrer noopener">
+                <ExternalLink /> Open on YouTube
+              </a>
+            </DropdownMenuItem>
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function MetaLine({ video, children }: { video: VideoSummary; children?: ReactNode }) {
+  const views = formatViews(video.view_count);
+  const parts = [views, video.published_text].filter(Boolean);
+  if (parts.length === 0 && !children) return null;
+  return (
+    <p className="truncate">
+      {parts.join(" • ")}
+      {children}
+    </p>
+  );
+}
+
+function ChannelName({ video, className }: { video: VideoSummary; className?: string }) {
+  const ref = video.channel?.ref;
+  const name = video.channel?.name ?? ref ?? (video.source === "demo" ? "Demo media" : "Unknown channel");
+  return ref ? (
+    <Link to={channelPath(ref)} className={cn("block truncate hover:text-foreground", className)} title={name}>
+      {name}
+    </Link>
+  ) : (
+    <span className={cn("block truncate", className)}>{name}</span>
+  );
+}
+
+function CardAvatar({ video, className }: { video: VideoSummary; className?: string }) {
+  const ref = video.channel?.ref;
+  const avatar = <ChannelAvatar name={video.channel?.name ?? ref} src={video.channel?.avatar_url} className={className} />;
+  return ref ? (
+    <Link to={channelPath(ref)} tabIndex={-1} aria-hidden="true" className="shrink-0 self-start">
+      {avatar}
+    </Link>
+  ) : (
+    avatar
+  );
+}
+
+export type CardVariant = "grid" | "list" | "compact";
 
 export interface VideoCardProps {
   video: VideoSummary;
@@ -42,24 +159,31 @@ export interface VideoCardProps {
   progress?: number | null;
   onRemove?: () => void;
   removeLabel?: string;
+  variant?: CardVariant;
+  className?: string;
 }
 
-export function VideoCard({ video, onPlay, progress, onRemove, removeLabel = "Remove" }: VideoCardProps) {
-  const library = useLibrary();
+/**
+ * A video in YouTube's three card shapes: ``grid`` (home, channel), ``list``
+ * (search results) and ``compact`` (the watch page's side column).
+ */
+export function VideoCard({ video, onPlay, progress, onRemove, removeLabel = "Remove", variant = "grid", className }: VideoCardProps) {
   const queue = useQueue();
-  const favorite = library.isFavorite(video);
-  const live = video.live_status === "is_live" || video.live_status === "is_upcoming";
+  const live = isLive(video);
   const playable = video.available && !live;
-  const views = formatViews(video.view_count);
-  const channelRef = video.channel?.ref;
+  const play = () => (onPlay ? onPlay(video) : queue.select(video));
+  const href = watchPath(video);
 
   if (!playable) {
     return (
-      <article className="card unavailable" aria-label={`${video.title} (unavailable)`}>
-        <Thumbnail video={video} />
-        <div className="card-body">
-          <h3 className="card-title">{video.title}</h3>
-          <p className="card-meta">
+      <article
+        className={cn("card unavailable flex gap-3 opacity-60", variant === "grid" ? "flex-col" : "flex-row", className)}
+        aria-label={`${video.title} (unavailable)`}
+      >
+        <Thumbnail video={video} className={cn(variant === "list" && "w-[40%] max-w-90", variant === "compact" && "w-40 rounded-lg")} />
+        <div className="min-w-0 flex-1">
+          <h3 className="card-title line-clamp-2 text-sm font-medium">{video.title}</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
             {live ? "Live streams aren't supported yet" : (video.unavailable_reason ?? "Unavailable")}
           </p>
         </div>
@@ -67,52 +191,69 @@ export function VideoCard({ video, onPlay, progress, onRemove, removeLabel = "Re
     );
   }
 
-  return (
-    <article className="card">
-      <Link to={watchPath(video)} className="card-link" onClick={() => (onPlay ? onPlay(video) : queue.select(video))}>
-        <Thumbnail video={video} progress={progress} />
-        <h3 className="card-title" title={video.title}>
-          {video.title}
-        </h3>
-      </Link>
-      <div className="card-body">
-        <p className="card-meta">
-          {channelRef ? (
-            <Link to={channelPath(channelRef)} className="channel-link">
-              {video.channel?.name ?? channelRef}
-            </Link>
-          ) : (
-            <span>{video.channel?.name ?? (video.source === "demo" ? "Demo media" : "Unknown channel")}</span>
-          )}
-          {views ? <span className="dot">{views}</span> : null}
-        </p>
-        <div className="card-actions">
-          <button
-            type="button"
-            className={`icon-button small${favorite ? " active" : ""}`}
-            aria-label={favorite ? `Remove “${video.title}” from favorites` : `Add “${video.title}” to favorites`}
-            aria-pressed={favorite}
-            title={favorite ? "Remove from favorites" : "Add to favorites"}
-            onClick={() => library.toggleFavorite(video)}
-          >
-            <Icon name={favorite ? "heart" : "heartOutline"} size={18} />
-          </button>
-          <button
-            type="button"
-            className="icon-button small"
-            aria-label={`Add “${video.title}” to queue`}
-            title={queue.contains(video) ? "Already in queue" : "Add to queue"}
-            disabled={queue.contains(video)}
-            onClick={() => queue.enqueue(video)}
-          >
-            <Icon name="queueAdd" size={18} />
-          </button>
-          {onRemove ? (
-            <button type="button" className="icon-button small" aria-label={`${removeLabel}: ${video.title}`} title={removeLabel} onClick={onRemove}>
-              <Icon name="close" size={18} />
-            </button>
-          ) : null}
+  const thumbLink = (thumbClass?: string) => (
+    <Link to={href} className="card-link block shrink-0" tabIndex={-1} aria-hidden="true" onClick={play}>
+      <Thumbnail video={video} progress={progress} className={thumbClass} />
+    </Link>
+  );
+  const titleLink = (
+    <Link to={href} onClick={play} title={video.title} className="focus-visible:outline-offset-1">
+      {video.title}
+    </Link>
+  );
+
+  if (variant === "compact") {
+    return (
+      <article className={cn("card group relative flex gap-2", className)}>
+        {thumbLink("w-[168px] rounded-lg")}
+        <div className="flex min-w-0 flex-1 gap-1">
+          <div className="min-w-0 flex-1">
+            <h3 className="card-title line-clamp-2 text-sm font-medium leading-5">{titleLink}</h3>
+            <div className="mt-1 text-xs leading-[18px] text-muted-foreground">
+              <ChannelName video={video} />
+              <MetaLine video={video} />
+            </div>
+          </div>
+          <CardMenu video={video} onRemove={onRemove} removeLabel={removeLabel} />
         </div>
+      </article>
+    );
+  }
+
+  if (variant === "list") {
+    return (
+      <article className={cn("card group relative flex flex-col gap-3 sm:flex-row sm:gap-4", className)}>
+        {thumbLink("sm:w-90 sm:max-w-[45vw]")}
+        <div className="flex min-w-0 flex-1 gap-1">
+          <div className="min-w-0 flex-1">
+            <h3 className="card-title line-clamp-2 text-lg leading-[26px]">{titleLink}</h3>
+            <div className="text-xs leading-[18px] text-muted-foreground">
+              <MetaLine video={video} />
+            </div>
+            <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+              <CardAvatar video={video} className="size-6 text-[11px]" />
+              <ChannelName video={video} />
+            </div>
+          </div>
+          <CardMenu video={video} onRemove={onRemove} removeLabel={removeLabel} />
+        </div>
+      </article>
+    );
+  }
+
+  return (
+    <article className={cn("card group relative flex min-w-0 flex-col gap-3", className)}>
+      {thumbLink()}
+      <div className="flex gap-3">
+        <CardAvatar video={video} />
+        <div className="min-w-0 flex-1">
+          <h3 className="card-title line-clamp-2 text-base font-medium leading-[22px]">{titleLink}</h3>
+          <div className="mt-1 text-sm leading-5 text-muted-foreground">
+            <ChannelName video={video} />
+            <MetaLine video={video} />
+          </div>
+        </div>
+        <CardMenu video={video} onRemove={onRemove} removeLabel={removeLabel} />
       </div>
     </article>
   );

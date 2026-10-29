@@ -1,14 +1,20 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { ChevronRight } from "lucide-react";
+import { useCallback, useMemo } from "react";
 
-import type { Page } from "../api/types";
-import { EmptyState } from "../components/StateViews";
-import { VideoCard } from "../components/VideoCard";
+import { Button } from "@/components/ui/button";
+import { ChipBar, type Chip } from "@/components/ChipBar";
+import { Shelf, VideoShelf } from "@/components/Shelf";
+import { LoadingGrid } from "@/components/StateViews";
+import { feedsApi } from "@/feeds/api";
+import { feedPath, FEEDS, useEnabledFeeds } from "@/feeds/feeds";
+import { useCachedRequest } from "@/lib/useCachedRequest";
+
+import type { VideoSummary } from "../api/types";
 import { discoveryApi } from "../discovery/api";
 import { useLibrary } from "../library/LibraryContext";
-import { useQueue } from "../queue/QueueContext";
-import { Link, searchPath, useRouter, watchPath } from "../router/router";
+import { channelPath, Link, searchPath } from "../router/router";
 
-/** Fixed, clearly labelled keyword searches — not a personalized feed. */
+/** Fixed keyword searches offered as chips; each one is an ordinary YouTube search. */
 export const TOPIC_SHORTCUTS = [
   "Blender open movies",
   "NASA space footage",
@@ -20,155 +26,172 @@ export const TOPIC_SHORTCUTS = [
   "Science explained",
 ];
 
-function Shelf({ title, subtitle, action, children, id }: { title: string; subtitle?: ReactNode; action?: ReactNode; children: ReactNode; id: string }) {
+export function homeChips(activeFeed: string | null, searches: string[] = [], feeds = FEEDS): Chip[] {
+  const seen = new Set<string>();
+  const queries = [...searches, ...TOPIC_SHORTCUTS].filter((q) => {
+    const key = q.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return [
+    { key: "all", label: "All", to: "/", active: activeFeed === null },
+    ...feeds.map((feed) => ({ key: feed.id, label: feed.title, to: feedPath(feed.id), active: activeFeed === feed.id })),
+    ...queries.map((q) => ({ key: `q:${q}`, label: q, to: searchPath(q) })),
+  ];
+}
+
+function ViewAll({ to, label = "View all" }: { to: string; label?: string }) {
   return (
-    <section className="shelf" aria-labelledby={id}>
-      <header className="shelf-header">
-        <div>
-          <h2 id={id}>{title}</h2>
-          {subtitle ? <p className="muted small">{subtitle}</p> : null}
-        </div>
-        {action}
-      </header>
-      {children}
-    </section>
+    <Button asChild variant="ghost" size="sm" className="text-link">
+      <Link to={to}>
+        {label} <ChevronRight />
+      </Link>
+    </Button>
   );
+}
+
+function ShelfError({ title, message, onRetry }: { title: string; message: string; onRetry: () => void }) {
+  return (
+    <Shelf title={title}>
+      <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground" role="alert">
+        <span>{message}</span>
+        <Button variant="outline" size="sm" onClick={onRetry}>
+          Try again
+        </Button>
+      </div>
+    </Shelf>
+  );
+}
+
+function LoadingShelf({ title }: { title: string }) {
+  return (
+    <Shelf title={title}>
+      <LoadingGrid count={4} label={`Loading ${title}…`} />
+    </Shelf>
+  );
+}
+
+/** The first shelf of a public YouTube feed, with a link to the whole feed. */
+function FeedPreview({ id }: { id: string }) {
+  const feed = FEEDS.find((f) => f.id === id)!;
+  const fetcher = useCallback((signal: AbortSignal) => feedsApi.get(id, signal), [id]);
+  const { data, error, loading, retry } = useCachedRequest(`feed:${id}`, fetcher);
+  const Icon = feed.icon;
+  if (loading) return <LoadingShelf title={feed.title} />;
+  if (error) return <ShelfError title={feed.title} message={`Couldn't load ${feed.title} from YouTube: ${error.message}`} onRetry={retry} />;
+  const shelf = data?.shelves.find((s) => s.items.length > 0);
+  if (!shelf) return null;
+  return (
+    <VideoShelf
+      title={shelf.title ?? feed.title}
+      icon={<Icon className="size-6" aria-hidden="true" />}
+      subtitle={`${feed.title} on YouTube`}
+      items={shelf.items}
+      rows={1}
+      action={<ViewAll to={feedPath(id)} label={`More ${feed.title.toLowerCase()}`} />}
+    />
+  );
+}
+
+/** "More from <channel>": recommendations built only from this browser's history. */
+function ChannelRecommendation({ channelRef, name, exclude }: { channelRef: string; name: string; exclude: Set<string> }) {
+  const fetcher = useCallback((signal: AbortSignal) => discoveryApi.channel(channelRef, 0, signal), [channelRef]);
+  const { data, loading } = useCachedRequest(`channel:${channelRef}`, fetcher);
+  if (loading) return <LoadingShelf title={`More from ${name}`} />;
+  const items = (data?.items ?? []).filter((v) => !exclude.has(v.id));
+  if (items.length === 0) return null;
+  return (
+    <VideoShelf
+      title={`More from ${name}`}
+      subtitle="Because you watched this channel"
+      items={items}
+      rows={1}
+      action={<ViewAll to={channelPath(channelRef)} />}
+    />
+  );
+}
+
+function SearchRecommendation({ query, exclude }: { query: string; exclude: Set<string> }) {
+  const fetcher = useCallback((signal: AbortSignal) => discoveryApi.search(query, 0, signal), [query]);
+  const { data, loading } = useCachedRequest(`search:${query}`, fetcher);
+  if (loading) return <LoadingShelf title={`Because you searched “${query}”`} />;
+  const items = (data?.items ?? []).filter((v) => !exclude.has(v.id));
+  if (items.length === 0) return null;
+  return (
+    <VideoShelf
+      title={`Because you searched “${query}”`}
+      items={items}
+      rows={1}
+      action={<ViewAll to={searchPath(query)} />}
+    />
+  );
+}
+
+/** Channels the user watched most often in this browser, most-watched first. */
+function topChannels(history: Array<{ video: VideoSummary }>, limit: number) {
+  const counts = new Map<string, { name: string; count: number }>();
+  for (const { video } of history) {
+    const ref = video.channel?.ref;
+    if (video.source !== "youtube" || !ref) continue;
+    const entry = counts.get(ref) ?? { name: video.channel?.name ?? ref, count: 0 };
+    entry.count++;
+    counts.set(ref, entry);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, limit)
+    .map(([ref, { name }]) => ({ ref, name }));
 }
 
 export function HomeView() {
   const library = useLibrary();
-  const queue = useQueue();
-  const { navigate } = useRouter();
-  const [demo, setDemo] = useState<Page | null>(null);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    discoveryApi
-      .demo(controller.signal)
-      .then(setDemo)
-      .catch(() => setDemo(null));
-    return () => controller.abort();
-  }, []);
-
+  const { feeds, known } = useEnabledFeeds();
+  // Wait for the server's list so a disabled feed never flashes an error.
+  const feedOn = (id: string) => known && feeds.some((feed) => feed.id === id);
   const { continueWatching, favorites, history, searches } = library;
-  const inProgress = new Set(continueWatching.map((h) => `${h.video.source}:${h.video.id}`));
-  const recent = history.filter((h) => !inProgress.has(`${h.video.source}:${h.video.id}`)).slice(0, 8);
-  const nothingSaved = continueWatching.length === 0 && favorites.length === 0 && history.length === 0;
+  const watched = useMemo(() => new Set(history.map((h) => h.video.id)), [history]);
+  const channels = useMemo(() => topChannels(history, 2), [history]);
+  const lastSearch = searches[0]?.query;
+  const progress = useMemo(() => {
+    const map = new Map(continueWatching.map((h) => [`${h.video.source}:${h.video.id}`, h.duration ? h.position / h.duration : null]));
+    return (video: VideoSummary) => map.get(`${video.source}:${video.id}`) ?? null;
+  }, [continueWatching]);
 
   return (
-    <div className="home">
-      <section className="hero">
-        <h1>Browse YouTube. Watch it through a canvas.</h1>
-        <p className="muted">
-          Search, or paste a video, channel or playlist link. The server prepares each video, then every frame is drawn
-          into an HTML <code>&lt;canvas&gt;</code>, with optional visual effects.
-        </p>
-      </section>
+    <div className="px-4 pb-12 sm:px-6">
+      <ChipBar label="Topics" chips={homeChips(null, searches.slice(0, 4).map((s) => s.query), feeds)} />
 
       {continueWatching.length > 0 ? (
-        <Shelf id="continue" title="Continue watching">
-          <div className="row-scroll">
-            {continueWatching.slice(0, 12).map((h) => (
-              <VideoCard
-                key={`${h.video.source}:${h.video.id}`}
-                video={h.video}
-                progress={h.duration ? h.position / h.duration : null}
-                onRemove={() => library.removeFromHistory(h.video)}
-                removeLabel="Remove from history"
-              />
-            ))}
-          </div>
-        </Shelf>
+        <VideoShelf
+          title="Continue watching"
+          items={continueWatching.map((h) => h.video)}
+          rows={1}
+          progressFor={progress}
+          onRemove={(video) => library.removeFromHistory(video)}
+          removeLabel="Remove from history"
+          action={<ViewAll to="/history" />}
+        />
       ) : null}
+
+      {feedOn("music") ? <FeedPreview id="music" /> : null}
+      {channels[0] ? <ChannelRecommendation channelRef={channels[0].ref} name={channels[0].name} exclude={watched} /> : null}
+      {feedOn("news") ? <FeedPreview id="news" /> : null}
+      {lastSearch ? <SearchRecommendation query={lastSearch} exclude={watched} /> : null}
+      {channels[1] ? <ChannelRecommendation channelRef={channels[1].ref} name={channels[1].name} exclude={watched} /> : null}
+      {feedOn("live") ? <FeedPreview id="live" /> : null}
 
       {favorites.length > 0 ? (
-        <Shelf id="favorites" title="Favorites" action={<Link to="/library" className="text-link">See all</Link>}>
-          <div className="row-scroll">
-            {favorites.slice(0, 12).map((f) => (
-              <VideoCard key={`${f.video.source}:${f.video.id}`} video={f.video} />
-            ))}
-          </div>
-        </Shelf>
+        <VideoShelf title="Favorites" items={favorites.map((f) => f.video)} rows={1} action={<ViewAll to="/favorites" />} />
       ) : null}
 
-      {recent.length > 0 || searches.length > 0 ? (
-        <Shelf
-          id="recent"
-          title="Recent activity"
-          action={history.length > 0 ? <Link to="/library" className="text-link">History</Link> : undefined}
-        >
-          {searches.length > 0 ? (
-            <div className="chips" aria-label="Recent searches">
-              {searches.map((s) => (
-                <Link key={s.query} to={searchPath(s.query)} className="chip">
-                  {s.query}
-                </Link>
-              ))}
-              <button type="button" className="chip ghost" onClick={library.clearSearches}>
-                Clear searches
-              </button>
-            </div>
-          ) : null}
-          {recent.length > 0 ? (
-            <div className="row-scroll">
-              {recent.map((h) => (
-                <VideoCard key={`${h.video.source}:${h.video.id}`} video={h.video} />
-              ))}
-            </div>
-          ) : null}
-        </Shelf>
-      ) : null}
+      {feedOn("gaming") ? <FeedPreview id="gaming" /> : null}
 
-      {nothingSaved ? (
-        <EmptyState title="Nothing saved yet">
-          Videos you favorite or start watching appear here. Try a search, a topic shortcut, or a demo clip below.
-        </EmptyState>
-      ) : null}
-
-      <Shelf
-        id="topics"
-        title="Topic shortcuts"
-        subtitle="Each one runs an ordinary YouTube keyword search. This is not a personalized feed."
-      >
-        <div className="chips">
-          {TOPIC_SHORTCUTS.map((topic) => (
-            <Link key={topic} to={searchPath(topic)} className="chip topic">
-              {topic}
-            </Link>
-          ))}
-        </div>
-      </Shelf>
-
-      {demo && demo.items.length > 0 ? (
-        <Shelf
-          id="demo"
-          title="Demo & test media"
-          subtitle="Generated locally with FFmpeg — not from YouTube. Use these to check the canvas pipeline without network access."
-          action={
-            <button
-              type="button"
-              className="button ghost small"
-              onClick={() => {
-                const first = demo.items[0]!;
-                queue.playList(demo.items, first, { label: "Demo & test media" });
-                navigate(watchPath(first));
-              }}
-            >
-              Play all
-            </button>
-          }
-        >
-          <div className="row-scroll">
-            {demo.items.map((video) => (
-              <VideoCard
-                key={video.id}
-                video={video}
-                onPlay={(v) => queue.playList(demo.items, v, { label: "Demo & test media" })}
-              />
-            ))}
-          </div>
-        </Shelf>
-      ) : null}
+      <p className="pt-6 text-xs text-muted-foreground">
+        Shelves come from YouTube’s public Music, News, Live and Gaming pages. “More from” and “Because you searched”
+        use only the history saved in this browser. yt-canvas never signs in to YouTube, so there are no personalized
+        YouTube recommendations.
+      </p>
     </div>
   );
 }

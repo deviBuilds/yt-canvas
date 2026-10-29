@@ -40,6 +40,8 @@ export default defineConfig({
       YTC_FRONTEND_DIST: path.resolve(import.meta.dirname, "dist"),
       YTC_MIN_FREE_DISK_MB: "0",
       YTC_DEMO_READRATE: "4",
+      // Keep the suite off YouTube: no Music/News/... shelves or related videos.
+      YTC_ENABLE_FEEDS: "false",
       YTC_LOG_LEVEL: "WARNING",
     },
   },

@@ -21,6 +21,7 @@ from .config import Settings, load_settings
 from .deps import detect_dependencies
 from .discovery.provider import DiscoveryProvider
 from .discovery.service import DiscoveryService
+from .discovery.youtube_pages import YouTubePagesService
 from .discovery.ytdlp_provider import YtDlpDiscoveryProvider
 from .errors import AppError
 from .media.demo import DemoMediaProvider
@@ -85,6 +86,7 @@ def create_app(
     app.state.settings = settings
     app.state.storage = storage
     app.state.discovery = DiscoveryService(settings, discovery_provider or YtDlpDiscoveryProvider(settings))
+    app.state.feeds = YouTubePagesService(settings)
 
     @app.exception_handler(AppError)
     async def app_error_handler(_: Request, exc: AppError) -> JSONResponse:

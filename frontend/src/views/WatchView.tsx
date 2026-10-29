@@ -1,9 +1,16 @@
+import { ExternalLink, Heart, Keyboard, Play, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { ChannelAvatar } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { feedsApi } from "@/feeds/api";
+import { useCachedRequest } from "@/lib/useCachedRequest";
+import { cn } from "@/lib/utils";
+
 import { videoKey, type MediaInfo, type MediaRef, type VideoSummary } from "../api/types";
-import { Icon } from "../components/Icon";
-import { EmptyState } from "../components/StateViews";
-import { Thumbnail } from "../components/VideoCard";
+import { EmptyState, LoadingGrid } from "../components/StateViews";
+import { Thumbnail, VideoCard } from "../components/VideoCard";
 import { discoveryApi } from "../discovery/api";
 import { useLibrary } from "../library/LibraryContext";
 import { formatBytes, formatTime, formatViews } from "../lib/format";
@@ -38,66 +45,107 @@ function placeholder(ref: MediaRef): VideoSummary {
   };
 }
 
+/** The current queue or playlist, like YouTube's playlist panel above "Up next". */
 function QueuePanel() {
   const queue = useQueue();
   const { navigate } = useRouter();
   return (
-    <aside className="queue" aria-labelledby="queue-title">
-      <header className="queue-header">
-        <div>
-          <h2 id="queue-title">Up next</h2>
-          {queue.label ? <p className="muted small">{queue.label}</p> : null}
+    <aside className="mb-4 overflow-hidden rounded-xl border border-border" aria-labelledby="queue-title">
+      <header className="flex items-start justify-between gap-3 bg-secondary px-4 py-3">
+        <div className="min-w-0">
+          <h2 id="queue-title" className="text-xl font-bold">
+            Up next
+          </h2>
+          <p className="truncate text-xs text-muted-foreground">
+            {queue.label ? `${queue.label} · ` : ""}
+            {queue.index + 1} / {queue.items.length}
+          </p>
         </div>
-        <label className="switch">
-          <input type="checkbox" checked={queue.autoplay} onChange={(e) => queue.setAutoplay(e.currentTarget.checked)} />
-          <span>Autoplay</span>
+        <label className="flex shrink-0 items-center gap-2 pt-1 text-xs font-medium">
+          Autoplay
+          <Switch checked={queue.autoplay} onCheckedChange={queue.setAutoplay} aria-label="Autoplay" />
         </label>
       </header>
-      {queue.items.length === 0 ? (
-        <p className="muted small queue-empty">The queue is empty. Use “Add to queue” on any video, or “Play all” on a list.</p>
-      ) : (
-        <ol className="queue-list">
-          {queue.items.map((item, i) => {
-            const current = i === queue.index;
-            return (
-              <li key={videoKey(item)} className={current ? "current" : ""} aria-current={current ? "true" : undefined}>
-                <button
-                  type="button"
-                  className="queue-item"
-                  onClick={() => {
-                    queue.select(item);
-                    navigate(watchPath(item));
-                  }}
-                >
-                  <span className="queue-index">{current ? <Icon name="play" size={14} /> : i + 1}</span>
-                  <Thumbnail video={item} />
-                  <span className="queue-text">
-                    <span className="queue-title">{item.title}</span>
-                    <span className="muted small">
-                      {item.channel?.name ?? ""}
-                      {item.duration_seconds ? ` · ${formatTime(item.duration_seconds)}` : ""}
-                    </span>
+      <ol className="max-h-[400px] overflow-y-auto py-2">
+        {queue.items.map((item, i) => {
+          const current = i === queue.index;
+          return (
+            <li
+              key={videoKey(item)}
+              className={cn("group flex items-center gap-1 pr-2 hover:bg-secondary", current && "bg-secondary-hover/60")}
+              aria-current={current ? "true" : undefined}
+            >
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 py-1 pl-1 text-left"
+                onClick={() => {
+                  queue.select(item);
+                  navigate(watchPath(item));
+                }}
+              >
+                <span className="flex w-6 shrink-0 justify-center text-xs text-muted-foreground">
+                  {current ? <Play className="size-3 fill-current" /> : i + 1}
+                </span>
+                <Thumbnail video={item} className="w-24 shrink-0 rounded-lg" />
+                <span className="min-w-0">
+                  <span className="line-clamp-2 text-sm font-medium leading-5">{item.title}</span>
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {item.channel?.name ?? ""}
+                    {item.duration_seconds ? ` · ${formatTime(item.duration_seconds)}` : ""}
                   </span>
-                </button>
-                <button
-                  type="button"
-                  className="icon-button small"
-                  aria-label={`Remove “${item.title}” from queue`}
-                  onClick={() => queue.remove(item)}
-                >
-                  <Icon name="close" size={16} />
-                </button>
-              </li>
-            );
-          })}
-        </ol>
-      )}
-      {queue.items.length > 0 ? (
-        <button type="button" className="button ghost small" onClick={queue.clear}>
+                </span>
+              </button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
+                aria-label={`Remove “${item.title}” from queue`}
+                onClick={() => queue.remove(item)}
+              >
+                <X />
+              </Button>
+            </li>
+          );
+        })}
+      </ol>
+      <div className="border-t border-border px-2 py-1">
+        <Button variant="ghost" size="sm" onClick={queue.clear}>
           Clear queue
-        </button>
-      ) : null}
+        </Button>
+      </div>
     </aside>
+  );
+}
+
+/**
+ * The side column's video list: YouTube's related videos when the backend can
+ * read them, otherwise more from the same channel.
+ */
+function useRelated(video: VideoSummary, refKey: string | null) {
+  const youtube = video.source === "youtube";
+  const relatedFetcher = useCallback((signal: AbortSignal) => feedsApi.related(video.id, signal), [video.id]);
+  const related = useCachedRequest(youtube ? `related:${video.id}` : null, relatedFetcher);
+  const channelRef = video.channel?.ref ?? null;
+  const fallback = youtube && (related.error !== null || (related.data !== null && related.data.items.length === 0));
+  const channelFetcher = useCallback((signal: AbortSignal) => discoveryApi.channel(channelRef ?? "", 0, signal), [channelRef]);
+  const channel = useCachedRequest(fallback && channelRef ? `channel:${channelRef}` : null, channelFetcher);
+  const items = useMemo(() => {
+    const source = related.data?.items.length ? related.data.items : (channel.data?.items ?? []);
+    return source.filter((item) => videoKey(item) !== refKey && item.available && item.live_status !== "is_live" && item.live_status !== "is_upcoming");
+  }, [related.data, channel.data, refKey]);
+  return { items, loading: related.loading || channel.loading, fromChannel: !related.data?.items.length && items.length > 0 };
+}
+
+function RelatedList({ items, loading, fromChannel, channelName }: { items: VideoSummary[]; loading: boolean; fromChannel: boolean; channelName?: string | null }) {
+  if (loading) return <LoadingGrid variant="compact" count={6} label="Loading related videos…" />;
+  if (items.length === 0) return null;
+  return (
+    <section aria-label="Related videos" className="flex flex-col gap-2">
+      {fromChannel ? <h2 className="pb-1 text-sm font-medium">More from {channelName ?? "this channel"}</h2> : null}
+      {items.map((item) => (
+        <VideoCard key={videoKey(item)} video={item} variant="compact" />
+      ))}
+    </section>
   );
 }
 
@@ -190,20 +238,36 @@ export function WatchView() {
     [refKey, recordProgress],
   );
 
+  const related = useRelated(video ?? placeholder({ source: "demo", id: "" }), refKey);
+  // Like YouTube, "next" falls back to the first related video when the queue runs out.
+  const upNext = queue.hasNext ? null : (related.items[0] ?? null);
   const goTo = useCallback((next: VideoSummary | null) => (next ? navigate(watchPath(next)) : undefined), [navigate]);
-  const onNext = useCallback(() => goTo(queue.next()), [goTo, queue]);
+  const onNext = useCallback(() => {
+    if (queue.hasNext) return goTo(queue.next());
+    if (upNext) {
+      queue.select(upNext);
+      goTo(upNext);
+    }
+  }, [goTo, queue, upNext]);
   const onPrevious = useCallback(() => goTo(queue.previous()), [goTo, queue]);
   const onEnded = useCallback(() => {
     const current = videoRef.current;
     const duration = unsaved.current?.duration ?? current?.duration_seconds ?? null;
     unsaved.current = null; // don't let the leave-flush overwrite "finished"
     if (current && duration) recordProgress(current, duration, duration);
-    if (queue.autoplay && queue.hasNext) onNext();
-  }, [recordProgress, queue.autoplay, queue.hasNext, onNext]);
+    if (queue.autoplay && (queue.hasNext || upNext)) onNext();
+  }, [recordProgress, queue.autoplay, queue.hasNext, upNext, onNext]);
 
   if (!ref || !video) {
     return (
-      <EmptyState title="No video selected" action={<Link to="/" className="button">Go home</Link>}>
+      <EmptyState
+        title="No video selected"
+        action={
+          <Button asChild variant="primary">
+            <Link to="/">Go home</Link>
+          </Button>
+        }
+      >
         Pick something to watch from search results or your library.
       </EmptyState>
     );
@@ -213,10 +277,12 @@ export function WatchView() {
   const favorite = library.isFavorite(video);
   const views = formatViews(video.view_count);
   const channelRef = video.channel?.ref;
+  const channelName = video.channel?.name ?? channelRef ?? (ref.source === "demo" ? "Demo media" : "");
+  const showQueue = queue.items.length > 1 || Boolean(queue.label);
 
   return (
-    <div className="watch">
-      <div className="watch-main">
+    <div className="mx-auto flex max-w-[1754px] flex-col gap-6 pb-12 sm:px-6 sm:pt-6 lg:flex-row lg:items-start">
+      <div className="min-w-0 flex-1 [--player-radius:0px] sm:[--player-radius:12px]">
         <CanvasPlayer
           src={prep.mediaUrl}
           title={video.title}
@@ -227,13 +293,17 @@ export function WatchView() {
           decoderStrategy={decoderStrategy}
           forceFallback={forceFallback}
           hasPrevious={queue.hasPrevious}
-          hasNext={queue.hasNext}
+          hasNext={queue.hasNext || upNext !== null}
           onPrevious={onPrevious}
           onNext={onNext}
           onEnded={onEnded}
           onTimeUpdate={onTimeUpdate}
           onRetry={prep.retry}
-          badge={ref.source === "demo" ? <span className="badge demo">DEMO MEDIA · generated locally</span> : null}
+          badge={
+            ref.source === "demo" ? (
+              <span className="rounded bg-black/70 px-2 py-1 text-xs font-medium tracking-wide text-white">DEMO MEDIA · generated locally</span>
+            ) : null
+          }
           overlay={
             <PreparationPanel
               job={prep.job}
@@ -245,72 +315,89 @@ export function WatchView() {
           }
         />
 
-        <section className="watch-info" aria-labelledby="watch-title">
-          <h1 id="watch-title">{video.title}</h1>
-          <div className="watch-meta">
-            <p className="muted">
+        <section className="px-3 sm:px-0" aria-labelledby="watch-title">
+          <h1 id="watch-title" className="mt-3 line-clamp-2 text-xl font-bold leading-7">
+            {video.title}
+          </h1>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
               {channelRef ? (
-                <Link to={channelPath(channelRef)} className="text-link">
-                  {video.channel?.name ?? channelRef}
+                <Link to={channelPath(channelRef)} tabIndex={-1} aria-hidden="true">
+                  <ChannelAvatar name={channelName} src={video.channel?.avatar_url} className="size-10" />
                 </Link>
               ) : (
-                (video.channel?.name ?? "")
+                <ChannelAvatar name={channelName} src={video.channel?.avatar_url} className="size-10" />
               )}
-              {views ? ` · ${views}` : ""}
-            </p>
-            <div className="row">
-              <button
-                type="button"
-                className={`button ghost${favorite ? " active" : ""}`}
-                aria-pressed={favorite}
-                onClick={() => library.toggleFavorite(video)}
-              >
-                <Icon name={favorite ? "heart" : "heartOutline"} size={18} /> {favorite ? "Favorited" : "Favorite"}
-              </button>
+              <div className="min-w-0">
+                {channelRef ? (
+                  <Link to={channelPath(channelRef)} className="block truncate text-base font-medium">
+                    {channelName}
+                  </Link>
+                ) : (
+                  <span className="block truncate text-base font-medium">{channelName}</span>
+                )}
+                {video.channel?.handle ? <span className="block truncate text-xs text-muted-foreground">{video.channel.handle}</span> : null}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant={favorite ? "primary" : "secondary"} aria-pressed={favorite} onClick={() => library.toggleFavorite(video)}>
+                <Heart className={cn(favorite && "fill-current")} /> {favorite ? "Favorited" : "Favorite"}
+              </Button>
               {ref.source === "youtube" ? (
-                <a className="button ghost" href={`https://www.youtube.com/watch?v=${ref.id}`} target="_blank" rel="noreferrer noopener">
-                  <Icon name="external" size={18} /> YouTube
-                </a>
+                <Button asChild variant="secondary">
+                  <a href={`https://www.youtube.com/watch?v=${ref.id}`} target="_blank" rel="noreferrer noopener">
+                    <ExternalLink /> YouTube
+                  </a>
+                </Button>
               ) : null}
             </div>
           </div>
 
-          {resumed && startTime ? (
-            <p className="small muted" role="status">
-              Resumed at {formatTime(startTime)} from your history.
-            </p>
-          ) : null}
-
-          {media ? (
-            <p className="small muted media-details" data-testid="media-details">
-              Prepared {media.width}×{media.height} · {media.video_codec?.toUpperCase()}/{media.audio_codec?.toUpperCase()} ·{" "}
-              {PROCESSING_LABELS[media.processing]} · {formatBytes(media.size_bytes)} · rendered to canvas
-            </p>
-          ) : null}
-
-          {ref.source === "demo" ? (
-            <p className="small notice-box">
-              This is locally generated <strong>demo/test media</strong>, not a YouTube video. The top bar fills from
-              left to right with playback time; the swatches are pure red, green and blue for checking effects.
-            </p>
-          ) : null}
-
-          <details className="shortcuts">
-            <summary>Keyboard shortcuts</summary>
-            <dl>
-              {SHORTCUT_HELP.map(([keys, label]) => (
-                <div key={keys}>
-                  <dt>
-                    <kbd>{keys}</kbd>
-                  </dt>
-                  <dd>{label}</dd>
-                </div>
-              ))}
-            </dl>
-          </details>
+          <div className="mt-3 rounded-xl bg-secondary p-3 text-sm">
+            {views || video.published_text ? (
+              <p className="font-medium">{[views, video.published_text].filter(Boolean).join("  ")}</p>
+            ) : null}
+            {resumed && startTime ? (
+              <p className="text-muted-foreground" role="status">
+                Resumed at {formatTime(startTime)} from your history.
+              </p>
+            ) : null}
+            {media ? (
+              <p className="mt-1 text-muted-foreground" data-testid="media-details">
+                Prepared {media.width}×{media.height} · {media.video_codec?.toUpperCase()}/{media.audio_codec?.toUpperCase()} ·{" "}
+                {PROCESSING_LABELS[media.processing]} · {formatBytes(media.size_bytes)} · rendered to canvas
+              </p>
+            ) : null}
+            {ref.source === "demo" ? (
+              <p className="mt-2">
+                This is locally generated <strong className="font-medium">demo/test media</strong>, not a YouTube video. The
+                top bar fills from left to right with playback time; the swatches are pure red, green and blue for checking
+                effects.
+              </p>
+            ) : null}
+            <details className="group mt-2">
+              <summary className="flex cursor-pointer list-none items-center gap-2 font-medium [&::-webkit-details-marker]:hidden">
+                <Keyboard className="size-4" aria-hidden="true" /> Keyboard shortcuts
+              </summary>
+              <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+                {SHORTCUT_HELP.map(([keys, label]) => (
+                  <div key={keys} className="contents">
+                    <dt>
+                      <kbd className="rounded border border-border bg-background px-1.5 py-0.5 text-xs">{keys}</kbd>
+                    </dt>
+                    <dd className="text-muted-foreground">{label}</dd>
+                  </div>
+                ))}
+              </dl>
+            </details>
+          </div>
         </section>
       </div>
-      <QueuePanel />
+
+      <div className="w-full shrink-0 px-3 sm:px-0 lg:w-[402px]">
+        {showQueue ? <QueuePanel /> : null}
+        <RelatedList items={related.items} loading={related.loading} fromChannel={related.fromChannel} channelName={video.channel?.name} />
+      </div>
     </div>
   );
 }

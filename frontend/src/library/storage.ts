@@ -38,7 +38,13 @@ export function asVideo(value: unknown): VideoSummary | null {
     id: v.id,
     title: v.title,
     channel: channel
-      ? { ref: str(channel.ref), id: str(channel.id), handle: str(channel.handle), name: str(channel.name) }
+      ? {
+          ref: str(channel.ref),
+          id: str(channel.id),
+          handle: str(channel.handle),
+          name: str(channel.name),
+          avatar_url: str(channel.avatar_url),
+        }
       : null,
     duration_seconds: num(v.duration_seconds),
     thumbnail_url: str(v.thumbnail_url),
@@ -46,6 +52,7 @@ export function asVideo(value: unknown): VideoSummary | null {
     live_status: (str(v.live_status) as VideoSummary["live_status"]) ?? null,
     available: v.available !== false,
     unavailable_reason: str(v.unavailable_reason),
+    published_text: str(v.published_text),
   };
 }
 

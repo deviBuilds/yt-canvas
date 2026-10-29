@@ -15,11 +15,15 @@ async function noHorizontalScroll(page: import("@playwright/test").Page) {
 test.describe("desktop layout", () => {
   test("home and watch pages", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByRole("heading", { name: "Topic shortcuts" })).toBeVisible();
-    await expect(page.getByText("This is not a personalized feed")).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Demo & test media" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Topics" }).getByRole("link", { name: "All" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Home" })).toBeVisible();
+    // Demo media is hidden from the UI.
+    await expect(page.getByText("Demo & test media")).toHaveCount(0);
     await page.screenshot({ path: `${SHOTS}/desktop-home.png`, fullPage: true });
     await noHorizontalScroll(page);
+
+    await page.goto("/demo");
+    await expect(page.getByRole("heading", { name: "Demo & test media" })).toBeVisible();
 
     await page.goto("/watch?demo=bars");
     await startPlayback(page);

@@ -8,7 +8,8 @@ import {
   type ReactNode,
 } from "react";
 
-import { Icon } from "../components/Icon";
+import { Play } from "lucide-react";
+
 import { CanvasRenderer } from "./CanvasRenderer";
 import type { EffectId } from "./effects";
 import { PlayerControls } from "./PlayerControls";
@@ -28,6 +29,10 @@ import { useMediaState } from "./useMediaState";
  * - "hidden": display:none — browsers differ here, so it is not the default.
  */
 export type DecoderStrategy = "layered" | "covered" | "offscreen" | "hidden";
+
+const OVERLAY_CARD = "w-full max-w-md rounded-xl bg-[#212121]/95 p-5 text-left text-white shadow-2xl";
+const OVERLAY_BUTTON =
+  "mt-4 inline-flex h-9 cursor-pointer items-center rounded-full bg-white px-4 text-sm font-medium text-black hover:bg-white/85";
 
 export interface CanvasPlayerProps {
   /** Same-origin URL of a prepared MP4, or null while there is nothing to play. */
@@ -425,11 +430,11 @@ export function CanvasPlayer(props: CanvasPlayerProps) {
 
         {src && media.phase === "error" ? (
           <div className="stage-overlay" role="alert">
-            <div className="overlay-card">
-              <h3>Playback error</h3>
-              <p>{media.error}</p>
+            <div className={OVERLAY_CARD}>
+              <h3 className="mb-2 text-lg font-medium">Playback error</h3>
+              <p className="text-sm text-white/80">{media.error}</p>
               {props.onRetry ? (
-                <button type="button" className="button" onClick={props.onRetry}>
+                <button type="button" className={OVERLAY_BUTTON} onClick={props.onRetry}>
                   Prepare again
                 </button>
               ) : null}
@@ -439,18 +444,23 @@ export function CanvasPlayer(props: CanvasPlayerProps) {
 
         {drawError ? (
           <div className="stage-overlay" role="alert">
-            <div className="overlay-card">
-              <h3>Canvas rendering failed</h3>
-              <p>{drawError}</p>
+            <div className={OVERLAY_CARD}>
+              <h3 className="mb-2 text-lg font-medium">Canvas rendering failed</h3>
+              <p className="text-sm text-white/80">{drawError}</p>
             </div>
           </div>
         ) : null}
 
         {needsGesture ? (
           <div className="stage-overlay">
-            <button type="button" className="big-play" onClick={tryPlay} aria-label="Play video">
-              <Icon name="play" size={40} />
-              <span>Click to play</span>
+            <button
+              type="button"
+              className="flex h-12 w-[68px] cursor-pointer items-center justify-center rounded-2xl bg-[#212121]/80 text-white transition-colors hover:bg-brand"
+              onClick={tryPlay}
+              aria-label="Play video"
+              title="Click to play"
+            >
+              <Play className="size-7 fill-current" />
             </button>
           </div>
         ) : null}

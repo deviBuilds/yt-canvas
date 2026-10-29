@@ -6,6 +6,9 @@ import asyncio
 import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Hashable
+from typing import Generic, TypeVar
+
+from pydantic import BaseModel
 
 from ..config import Settings
 from ..errors import AppError
@@ -14,17 +17,21 @@ from ..validation import clean_query, validate_channel_ref, validate_playlist_id
 from .provider import DiscoveryProvider
 
 
-class TTLCache:
+# Cached values are response models with a ``cached`` flag (Page, Feed, ...).
+ModelT = TypeVar("ModelT", bound=BaseModel)
+
+
+class TTLCache(Generic[ModelT]):
     """A small LRU cache with per-entry expiry that also coalesces concurrent misses."""
 
     def __init__(self, ttl: float, max_entries: int, clock: Callable[[], float] = time.monotonic) -> None:
         self.ttl = ttl
         self.max_entries = max_entries
         self._clock = clock
-        self._data: OrderedDict[Hashable, tuple[float, Page]] = OrderedDict()
-        self._inflight: dict[Hashable, asyncio.Future[Page]] = {}
+        self._data: OrderedDict[Hashable, tuple[float, ModelT]] = OrderedDict()
+        self._inflight: dict[Hashable, asyncio.Future[ModelT]] = {}
 
-    def get(self, key: Hashable) -> Page | None:
+    def get(self, key: Hashable) -> ModelT | None:
         hit = self._data.get(key)
         if hit is None:
             return None
@@ -35,7 +42,7 @@ class TTLCache:
         self._data.move_to_end(key)
         return value
 
-    def put(self, key: Hashable, value: Page) -> None:
+    def put(self, key: Hashable, value: ModelT) -> None:
         if self.ttl <= 0:
             return
         self._data[key] = (self._clock() + self.ttl, value)
@@ -43,7 +50,7 @@ class TTLCache:
         while len(self._data) > self.max_entries:
             self._data.popitem(last=False)
 
-    async def get_or_fetch(self, key: Hashable, fetch: Callable[[], Awaitable[Page]]) -> Page:
+    async def get_or_fetch(self, key: Hashable, fetch: Callable[[], Awaitable[ModelT]]) -> ModelT:
         cached = self.get(key)
         if cached is not None:
             return cached.model_copy(update={"cached": True})
@@ -55,7 +62,7 @@ class TTLCache:
                 if pending.cancelled():  # the leading request went away: fetch ourselves
                     return await self.get_or_fetch(key, fetch)
                 raise
-        future: asyncio.Future[Page] = asyncio.get_running_loop().create_future()
+        future: asyncio.Future[ModelT] = asyncio.get_running_loop().create_future()
         self._inflight[key] = future
         try:
             value = await fetch()
@@ -78,7 +85,7 @@ class DiscoveryService:
     def __init__(self, settings: Settings, provider: DiscoveryProvider) -> None:
         self.settings = settings
         self.provider = provider
-        self.cache = TTLCache(settings.metadata_cache_ttl, settings.metadata_cache_entries)
+        self.cache: TTLCache[Page] = TTLCache(settings.metadata_cache_ttl, settings.metadata_cache_entries)
 
     def _bounds(self, offset: int, cap: int) -> int:
         if offset < 0:

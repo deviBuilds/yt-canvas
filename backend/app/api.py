@@ -8,13 +8,14 @@ from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from .discovery.service import DiscoveryService
+from .discovery.youtube_pages import YouTubePagesService
 from .errors import AppError
 from .media.delivery import media_response
 from .media.demo import SAMPLES, demo_summary
 from .media.jobs import JobManager
 from .media.models import JobView
 from .media.storage import MediaStorage
-from .models import Page
+from .models import Feed, FeedList, Page, RelatedVideos
 from .validation import parse_input
 
 router = APIRouter(prefix="/api")
@@ -22,6 +23,10 @@ router = APIRouter(prefix="/api")
 
 def _discovery(request: Request) -> DiscoveryService:
     return request.app.state.discovery
+
+
+def _feeds(request: Request) -> YouTubePagesService:
+    return request.app.state.feeds
 
 
 def _jobs(request: Request) -> JobManager:
@@ -39,6 +44,7 @@ async def health(request: Request) -> dict:
     return {
         "ok": deps.can_extract and deps.can_process,
         "demo_enabled": state.settings.enable_demo,
+        "feeds_enabled": state.settings.enable_feeds,
         "max_height": state.settings.max_height,
         "dependencies": deps.to_dict(),
     }
@@ -67,6 +73,23 @@ async def channel(request: Request, ref: str = Query(..., max_length=120), offse
 @router.get("/playlist", response_model=Page)
 async def playlist(request: Request, id: str = Query(..., max_length=80), offset: int = 0) -> Page:
     return await _discovery(request).playlist(id, offset)
+
+
+@router.get("/feeds", response_model=FeedList)
+async def feeds(request: Request) -> FeedList:
+    """Curated public YouTube feeds; empty when YTC_ENABLE_FEEDS=false."""
+    return _feeds(request).feeds()
+
+
+@router.get("/feeds/{feed_id}", response_model=Feed)
+async def feed(request: Request, feed_id: str) -> Feed:
+    return await _feeds(request).feed(feed_id)
+
+
+@router.get("/related/{video_id}", response_model=RelatedVideos)
+async def related(request: Request, video_id: str) -> RelatedVideos:
+    """Related ("Up next") videos from the logged-out watch page."""
+    return await _feeds(request).related(video_id)
 
 
 @router.get("/demo", response_model=Page)

@@ -148,6 +148,7 @@ test("other effects and the rAF fallback renderer", async ({ page }) => {
   expect(b.frames).toBeGreaterThan(a.frames);
   expect(b.hash).not.toBe(a.hash);
 
+  await page.getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Visual effect").selectOption("invert");
   await expect.poll(async () => (await sampleCanvas(page, layout)).red[1]).toBeGreaterThan(190); // red -> cyan
 });
@@ -167,6 +168,7 @@ test("player controls: volume, mute, speed and fullscreen", async ({ page }) => 
   await page.keyboard.press("m");
   expect((await videoState(page)).muted).toBe(true);
 
+  await page.getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Playback speed").selectOption("1.5");
   await expect.poll(async () => (await videoState(page)).rate).toBe(1.5);
   await blur(page);
@@ -186,7 +188,8 @@ test("player controls: volume, mute, speed and fullscreen", async ({ page }) => 
 });
 
 test("queue: next/previous change the source and the canvas follows the new aspect ratio", async ({ page }) => {
-  await page.goto("/");
+  // Demo media isn't linked from the UI; /demo still lists it.
+  await page.goto("/demo");
   await page.getByRole("region", { name: "Demo & test media" }).getByRole("button", { name: "Play all" }).click();
   await expect(page).toHaveURL(/demo=bars/);
   await startPlayback(page);

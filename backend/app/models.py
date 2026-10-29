@@ -16,6 +16,7 @@ class ChannelInfo(BaseModel):
     id: str | None = None
     handle: str | None = None
     name: str | None = None
+    avatar_url: str | None = None
 
 
 class VideoSummary(BaseModel):
@@ -29,6 +30,8 @@ class VideoSummary(BaseModel):
     live_status: LiveStatus | None = None
     available: bool = True
     unavailable_reason: str | None = None
+    # Relative upload time as YouTube words it ("2 hours ago", "Streamed 3 days ago").
+    published_text: str | None = None
 
 
 PageKind = Literal["search", "channel", "playlist", "demo"]
@@ -45,5 +48,34 @@ class Page(BaseModel):
     offset: int = 0
     # Only set when the provider actually has another page.
     next_offset: int | None = None
+    provider: str
+    cached: bool = False
+
+
+class FeedInfo(BaseModel):
+    id: str
+    title: str
+
+
+class FeedList(BaseModel):
+    feeds: list[FeedInfo]
+
+
+class Shelf(BaseModel):
+    title: str | None = None
+    items: list[VideoSummary]
+
+
+class Feed(BaseModel):
+    id: str
+    title: str
+    shelves: list[Shelf]
+    provider: str
+    cached: bool = False
+
+
+class RelatedVideos(BaseModel):
+    video_id: str
+    items: list[VideoSummary]
     provider: str
     cached: bool = False

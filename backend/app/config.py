@@ -89,6 +89,7 @@ class Settings:
     # Features
     enable_demo: bool = True
     demo_readrate: int = 0  # cap demo generation at N× real time; 0 = as fast as possible
+    enable_feeds: bool = True  # curated public YouTube pages (Music, News, ...) and related videos
     frontend_dist: Path | None = None
     log_level: str = "INFO"
 
@@ -153,6 +154,7 @@ def load_settings() -> Settings:
         ffprobe_path=_str("YTC_FFPROBE_PATH", "ffprobe"),
         enable_demo=_bool("YTC_ENABLE_DEMO", True),
         demo_readrate=_int("YTC_DEMO_READRATE", 0, minimum=0),
+        enable_feeds=_bool("YTC_ENABLE_FEEDS", True),
         frontend_dist=frontend_dist,
         log_level=_str("YTC_LOG_LEVEL", "INFO").upper(),
     )
