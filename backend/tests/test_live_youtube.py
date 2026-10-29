@@ -6,7 +6,9 @@ cloud/datacenter IPs), in which case the preparation test fails with that
 error code rather than passing on fixtures.
 """
 
+import json
 import os
+import struct
 import time
 
 import pytest
@@ -112,6 +114,43 @@ def test_live_preparation(client):
     assert job["state"] == "ready", f"live preparation failed: {job['error']}"
     head = client.head(job["media"]["url"])
     assert head.status_code == 200 and int(head.headers["content-length"]) > 0
+
+
+def _boxes(data: bytes) -> list[tuple[str, int, int]]:
+    """Top-level boxes that start within ``data`` (the last one may run past its end)."""
+    boxes, offset = [], 0
+    while offset + 8 <= len(data):
+        size, kind = struct.unpack_from(">I4s", data, offset)
+        if size == 1 and offset + 16 <= len(data):
+            size = struct.unpack_from(">Q", data, offset + 8)[0]
+        if size < 8:
+            break
+        boxes.append((kind.decode("latin-1"), offset, size))
+        offset += size
+    return boxes
+
+
+def test_live_streaming(client):
+    response = client.post("/api/streams", json={"source": "youtube", "id": VIDEO_ID})
+    assert response.status_code == 200, response.text
+    session = response.json()
+    trimmed = {**session, "video_tracks": session["video_tracks"][:2], "audio_tracks": session["audio_tracks"][:2]}
+    print(f"\nsession: {json.dumps(trimmed, indent=1)}")
+    print(f"{len(session['video_tracks'])} video tracks: {[t['id'] for t in session['video_tracks']]}; "
+          f"{len(session['audio_tracks'])} audio tracks: {[t['id'] for t in session['audio_tracks']]}")
+    assert session["video_tracks"] and session["audio_tracks"]
+    assert "googlevideo" not in response.text
+    video = next((t for t in session["video_tracks"] if t["codecs"].startswith("avc1")), session["video_tracks"][0])
+    for track in (video, session["audio_tracks"][0]):
+        url = f"/api/streams/{session['session_id']}/tracks/{track['id']}"
+        part = client.get(url, params={"start": 0, "end": 65535})
+        assert part.status_code == 200, part.text
+        data = part.content
+        assert len(data) == min(65536, track["size_bytes"] or 65536)
+        boxes = _boxes(data)
+        print(f"track {track['id']} ({track['codecs']}): {[(kind, offset, size) for kind, offset, size in boxes[:5]]}")
+        assert data[4:8] == b"ftyp"
+        assert "sidx" in [kind for kind, _, _ in boxes], "expected a top-level sidx in the first 64 KiB"
 
 
 @pytest.fixture(scope="module")

@@ -31,6 +31,7 @@ from .provider import AcquiredMedia, JobContext, MediaInput, ResolvedMedia
 log = logging.getLogger(__name__)
 
 TIME_BAR_HEIGHT = 24
+FRAME_RATE = 30  # every sample's background and time bar are generated at this rate
 DEMO_CHANNEL = ChannelInfo(ref=None, name="Demo media (local)")
 
 
@@ -139,25 +140,36 @@ def _filter_graph(sample: DemoSample) -> str:
     )
 
 
-def generator_args(settings: Settings, sample: DemoSample, output: str, *, with_label: bool) -> list[str]:
+def lavfi_inputs(sample: DemoSample, readrate: int = 0) -> list[str]:
+    """The three generator inputs: background (0:v), time-bar canvas (1:v) and tone (2:a)."""
     w, h, d = sample.width, sample.height, sample.duration
+    # -readrate (FFmpeg 5.0+) makes generation take a predictable minimum time, like a download.
+    throttle = ("-readrate", str(readrate)) if readrate else ()
+    return [
+        *throttle, "-f", "lavfi", "-i", sample.background.format(w=w, h=h, d=d),
+        *throttle, "-f", "lavfi", "-i", f"color=c=black:size={w}x{TIME_BAR_HEIGHT}:rate={FRAME_RATE}:duration={d}",
+        *throttle, "-f", "lavfi", "-i", f"sine=frequency={sample.tone_hz}:sample_rate=48000:duration={d}",
+    ]
+
+
+def video_graph(sample: DemoSample, *, with_label: bool) -> str:
+    """The ``-filter_complex`` graph over :func:`lavfi_inputs`; its output pad is ``[v]``."""
     graph = _filter_graph(sample)
     if with_label:
         graph += (",drawtext=text='DEMO':fontcolor=white:fontsize=24:x=w-tw-16:y=40:"
                   "box=1:boxcolor=black@0.6:boxborderw=8")
-    graph += ",format=yuv420p[v]"
-    # -readrate (FFmpeg 5.0+) makes generation take a predictable minimum time, like a download.
-    throttle = ("-readrate", str(settings.demo_readrate)) if settings.demo_readrate else ()
+    return graph + ",format=yuv420p[v]"
+
+
+def generator_args(settings: Settings, sample: DemoSample, output: str, *, with_label: bool) -> list[str]:
     return [
         settings.ffmpeg_path, "-hide_banner", "-nostdin", "-y", "-loglevel", "error",
         "-progress", "pipe:1", "-nostats",
-        *throttle, "-f", "lavfi", "-i", sample.background.format(w=w, h=h, d=d),
-        *throttle, "-f", "lavfi", "-i", f"color=c=black:size={w}x{TIME_BAR_HEIGHT}:rate=30:duration={d}",
-        *throttle, "-f", "lavfi", "-i", f"sine=frequency={sample.tone_hz}:sample_rate=48000:duration={d}",
-        "-filter_complex", graph,
+        *lavfi_inputs(sample, settings.demo_readrate),
+        "-filter_complex", video_graph(sample, with_label=with_label),
         "-map", "[v]", "-map", "2:a",
         *sample.video_args, *sample.audio_args,
-        "-t", str(d),
+        "-t", str(sample.duration),
         "-f", sample.container,
         output,
     ]

@@ -7,7 +7,7 @@ import { blur, currentSrc, demoLayout, framesDrawn, isGray, openDemo, sampleCanv
 
 test("preparation walks through explicit states before playback", async ({ page }) => {
   const layout = await demoLayout(page, "sweep");
-  await page.goto("/watch?demo=sweep");
+  await page.goto("/watch?demo=sweep&playback=download");
   const panel = page.getByTestId("preparation");
   await expect(panel).toBeVisible();
   await expect(panel).toContainText("downloads and prepares the whole video before playback");
@@ -29,6 +29,53 @@ test("preparation walks through explicit states before playback", async ({ page 
   await expect(page.getByTestId("media-details")).toContainText("transcoded to H.264/AAC");
   const sample = await sampleCanvas(page, layout);
   expect(sample.width / sample.height).toBeCloseTo(4 / 3, 1);
+});
+
+test("streaming plays through Media Source without preparing a file", async ({ page }) => {
+  const jobs: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/jobs")) jobs.push(request.url());
+  });
+  const layout = await openDemo(page, "bars"); // streaming is the default
+  expect(await currentSrc(page)).toMatch(/^blob:/);
+  await expect(page.getByTestId("media-details")).toContainText("Streaming");
+  await expect(page.getByTestId("media-details")).toContainText("nothing saved to disk");
+
+  const first = await sampleCanvas(page, layout);
+  await page.waitForTimeout(1200);
+  const second = await sampleCanvas(page, layout);
+  expect(second.frames).toBeGreaterThan(first.frames);
+  expect(second.hash).not.toBe(first.hash);
+  expect(Math.abs(second.bar - second.time / second.duration)).toBeLessThan(0.06);
+
+  // Seeking ahead fetches the segment that holds the new time and draws it.
+  await page.getByRole("button", { name: "Pause" }).click();
+  await page.getByRole("slider", { name: "Seek" }).fill("15");
+  await expect.poll(async () => (await sampleCanvas(page, layout)).bar, { timeout: 20_000 }).toBeGreaterThan(0.7);
+  const seeked = await sampleCanvas(page, layout);
+  expect(Math.abs(seeked.bar - seeked.time / seeked.duration)).toBeLessThan(0.06);
+  expect(jobs).toEqual([]);
+});
+
+test("the playback toggle switches to downloading first, and is remembered", async ({ page }) => {
+  await openDemo(page, "bars");
+  const streamSrc = await currentSrc(page);
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Playback mode").selectOption("download");
+  await startPlayback(page, streamSrc);
+  expect(await currentSrc(page)).toMatch(/^\/api\/media\//);
+  await expect(page.getByTestId("media-details")).toContainText("remuxed");
+
+  await page.reload();
+  await startPlayback(page);
+  expect(await currentSrc(page)).toMatch(/^\/api\/media\//);
+
+  // And back to streaming.
+  const fileSrc = await currentSrc(page);
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Playback mode").selectOption("stream");
+  await startPlayback(page, fileSrc);
+  expect(await currentSrc(page)).toMatch(/^blob:/);
 });
 
 test("actual video frames reach the canvas and change during playback", async ({ page }) => {

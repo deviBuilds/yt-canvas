@@ -4,11 +4,12 @@ A *source provider* knows how to turn a reference (a YouTube video ID, a demo
 sample ID) into local input files. Everything after that — probing, remuxing
 or transcoding, faststart, storage and byte-range delivery — is shared.
 
-The MVP contract is "prepare a complete file, then serve it". Progressive
-streaming can be added later by a provider that advertises
-``supports_progressive = True`` and implements an additional method that
-yields a growing fragmented-MP4 file; the job manager and :class:`MediaInfo`
-already carry a ``delivery`` mode for that purpose.
+The contract here is "prepare a complete file, then serve it" (the "Download
+first" mode). Streaming playback, which proxies YouTube's DASH tracks into Media
+Source Extensions without storing anything, lives in :mod:`app.media.streams`
+and doesn't go through providers or jobs. ``supports_progressive`` and
+:class:`MediaInfo`'s ``delivery`` remain reserved for a provider that would
+yield a growing fragmented-MP4 file.
 """
 
 from __future__ import annotations

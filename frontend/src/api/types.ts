@@ -63,6 +63,32 @@ export interface Feed {
   cached: boolean;
 }
 
+export interface StreamTrack {
+  /** yt-dlp format id ("137", "140"), or "video" / "audio" for demo clips. */
+  id: string;
+  mime_type: string;
+  codecs: string;
+  width?: number | null;
+  height?: number | null;
+  fps?: number | null;
+  bitrate: number | null;
+  size_bytes: number | null;
+  /** Audio only: 2 for stereo, 6 for 5.1. The backend lists stereo first. */
+  channels?: number | null;
+}
+
+/** A streaming session: the tracks the backend will proxy in byte ranges (POST /api/streams). */
+export interface StreamSession {
+  session_id: string;
+  source: Source;
+  video_id: string;
+  video: VideoSummary | null;
+  duration_seconds: number | null;
+  video_tracks: StreamTrack[];
+  audio_tracks: StreamTrack[];
+  expires_at: number;
+}
+
 /** YouTube sign-in through the browser's cookies (opt-in; see /signin). */
 export interface Me {
   configured: boolean;

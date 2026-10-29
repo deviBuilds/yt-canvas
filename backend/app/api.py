@@ -14,8 +14,9 @@ from .errors import AppError
 from .media.delivery import media_response
 from .media.demo import SAMPLES, demo_summary
 from .media.jobs import JobManager
-from .media.models import JobView
+from .media.models import JobView, StreamView
 from .media.storage import MediaStorage
+from .media.streams import StreamManager
 from .models import Feed, FeedList, Me, Page, RelatedVideos
 from .validation import parse_input
 
@@ -42,6 +43,13 @@ def _storage(request: Request) -> MediaStorage:
     return request.app.state.storage
 
 
+def _streams(request: Request) -> StreamManager:
+    if not request.app.state.settings.enable_streaming:
+        raise AppError("not_found", "Streaming playback is turned off on this server (YTC_ENABLE_STREAMING=false).",
+                       status=404, hint="Download the video first instead.")
+    return request.app.state.streams
+
+
 @router.get("/health")
 async def health(request: Request) -> dict:
     state = request.app.state
@@ -50,6 +58,7 @@ async def health(request: Request) -> dict:
         "ok": deps.can_extract and deps.can_process,
         "demo_enabled": state.settings.enable_demo,
         "feeds_enabled": state.settings.enable_feeds,
+        "streaming_enabled": state.settings.enable_streaming,
         "signed_in_configured": state.settings.signed_in_configured,
         "max_height": state.settings.max_height,
         "dependencies": deps.to_dict(),
@@ -169,3 +178,21 @@ async def media(request: Request, media_id: str) -> Response:
                        status=404, hint="Prepare the video again.")
     lease = storage.lease(media_id)
     return media_response(request, stored, lease, stored.meta.get("media", {}).get("content_type", "video/mp4"))
+
+
+@router.post("/streams", response_model=StreamView)
+async def create_stream(request: Request, body: PrepareRequest) -> StreamView:
+    """Start a streaming session: tracks to read in byte ranges into Media Source Extensions."""
+    streams = _streams(request)
+    if body.source == "demo" and not request.app.state.settings.enable_demo:
+        raise AppError("not_found", "Demo media is disabled (YTC_ENABLE_DEMO=false).", status=404)
+    return await streams.create(body.source, body.id)
+
+
+@router.get("/streams/{session_id}/tracks/{track_id}")
+async def stream_track(request: Request, session_id: str, track_id: str,
+                       start: int = Query(...), end: int = Query(...)) -> Response:
+    """Bytes ``start..end`` (inclusive, like an HTTP Range; clamped to the track size)."""
+    data = await _streams(request).read(session_id, track_id, start, end)
+    return Response(content=data, media_type="application/octet-stream",
+                    headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})

@@ -134,3 +134,16 @@ def test_demo_job_lifecycle_over_http(client):
     media = client.get(job["media"]["url"], headers={"Range": "bytes=0-7"})
     assert media.status_code == 206
     assert media.content[4:8] == b"ftyp"
+
+
+def test_index_csp_allows_media_source_blobs(settings, tmp_path):
+    # Streaming feeds the decoder from a Media Source, whose URL is a blob: URL.
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<!doctype html><title>t</title>")
+    from tests.conftest import with_settings
+
+    with TestClient(create_app(with_settings(settings, frontend_dist=dist))) as client:
+        csp = client.get("/watch").headers["content-security-policy"]
+    assert "media-src 'self' blob:" in csp
+    assert "script-src 'self';" in csp

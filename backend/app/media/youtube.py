@@ -54,8 +54,12 @@ def _number(value: str) -> float | None:
     return number if number >= 0 else None
 
 
-def check_playable(info: dict[str, Any], settings: Settings) -> None:
-    """Reject media we deliberately don't support, with a clear reason."""
+def check_playable(info: dict[str, Any], settings: Settings, *, check_duration: bool = True) -> None:
+    """Reject media we deliberately don't support, with a clear reason.
+
+    Streaming playback passes ``check_duration=False``: it stores nothing, so the download
+    length limit doesn't apply.
+    """
     live_status = info.get("live_status")
     if info.get("is_live") or live_status == "is_live":
         raise AppError("live_unsupported", "Live streams can't be prepared for playback.", status=422,
@@ -71,10 +75,17 @@ def check_playable(info: dict[str, Any], settings: Settings) -> None:
         raise AppError("restricted", "This video requires a signed-in or paying account.", status=403,
                        hint=SIGNIN_HINT)
     duration = info.get("duration")
-    if isinstance(duration, (int, float)) and duration > settings.max_duration_seconds:
+    if check_duration and isinstance(duration, (int, float)) and duration > settings.max_duration_seconds:
         limit_min = settings.max_duration_seconds // 60
         raise AppError("too_long", f"This video is longer than the {limit_min}-minute limit.", status=413,
                        hint="Raise YTC_MAX_DURATION_SECONDS to allow longer videos.")
+
+
+def mark_watched_args(settings: Settings) -> list[str]:
+    """``--mark-watched`` for a playback extraction (YTC_MARK_WATCHED, signed in only)."""
+    if settings.mark_watched and settings.signed_in_configured:
+        return ["--mark-watched"]
+    return []
 
 
 class YouTubeMediaProvider:
@@ -94,9 +105,7 @@ class YouTubeMediaProvider:
         call: the download step reuses that info JSON (``--load-info-json``) and never
         extracts again. Discovery listings never mark anything.
         """
-        if self.settings.mark_watched and self.settings.signed_in_configured:
-            return ["--mark-watched"]
-        return []
+        return mark_watched_args(self.settings)
 
     async def resolve(self, ref: str, ctx: JobContext) -> ResolvedMedia:
         video_id = self.validate_ref(ref)

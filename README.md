@@ -146,7 +146,36 @@ YouTube retired its Trending page: `/feed/trending` and `/feed/explore` now redi
 
 This depends on YouTube's page structure, which changes without notice. The parser tolerates several renderer shapes, and `make test-live` checks it against the real pages.
 
-### Media preparation (the MVP prepares before playback)
+### Streaming (the default)
+
+The player's settings gear has a **Playback mode** toggle: **Stream** (the default) or **Download first**. The choice is remembered per browser, and `?playback=stream|download` overrides it for one page. While streaming, a **Quality** menu lists the resolutions this browser can decode. "Auto" picks up to 1080p.
+
+Streaming plays YouTube's DASH tracks directly, without downloading the whole video:
+
+1. **Session:** `POST /api/streams` resolves the video with yt-dlp (no download) and returns the tracks a browser's Media Source can take:
+   - H.264 video (`avc1`, up to 1080p) and AV1 video (`av01`, higher resolutions), in fragmented MP4
+   - AAC audio (`mp4a`)
+2. **Range proxy:** `GET /api/streams/{session}/tracks/{track}?start=&end=` fetches just those bytes from YouTube with yt-dlp's request headers and passes them through. Nothing is written to disk, and YouTube's URLs never reach the browser. If YouTube refuses an expired URL, the backend resolves the video again once.
+3. **Browser:**
+   - `frontend/src/player/streaming` reads each track's `moov` (the init segment) and `sidx` (a time-to-byte index of segments a few seconds long).
+   - It feeds a Media Source, keeping about 30 s buffered ahead and dropping what's more than 30 s behind.
+   - A seek fetches the segment that holds the new time.
+   - The Media Source is same-origin, so the canvas stays readable and effects work as before.
+4. **Fallback:** if streaming can't be used, the player switches to **Download first** and says why. Reasons include no compatible tracks, YouTube refusing range reads, or a browser without Media Source.
+
+Demo clips stream too, from locally generated H.264/AAC tracks with a segment index, so the browser tests cover both modes offline.
+
+Settings:
+- `YTC_ENABLE_STREAMING` (default `true`)
+- `YTC_STREAM_MAX_HEIGHT` (default `2160`)
+- `YTC_STREAM_MAX_RANGE_MB` (default `16`, the largest single range the proxy reads)
+
+Not streamed yet:
+- live streams
+- VP9/WebM-only videos (these fall back to downloading)
+- quality switching by bandwidth (quality changes only when you pick it)
+
+### Media preparation ("Download first")
 
 Selecting a video creates a background job: `queued → resolving → downloading → processing → ready` (or `failed`).
 
@@ -247,6 +276,8 @@ Identical requests share one job; a file already in the cache yields an immediat
 | `GET /api/feeds` | The home feeds on offer (`[]` when `YTC_ENABLE_FEEDS=false`) |
 | `GET /api/feeds/{music\|news\|live\|gaming}` | A feed as titled shelves of videos |
 | `GET /api/related/{video_id}` | Related videos for the watch page |
+| `POST /api/streams` `{source, id}` | Start streaming: a session with the video's MSE-compatible tracks |
+| `GET /api/streams/{session}/tracks/{track}?start=&end=` | Bytes `start`–`end` of a track, proxied from YouTube (at most 16 MiB) |
 | `GET /api/me` | YouTube sign-in state: configured, signed in, source, avatar, home chips ([Signing in](#signing-in-opt-in)) |
 | `GET /api/me/feed/{recommended\|subscriptions\|history\|watch_later\|liked}?offset=` | The signed-in account's lists (401 `signed_out` when sign-in isn't set up) |
 | `GET /api/demo`, `GET /api/demo/{id}/layout` | Demo samples and their pixel layout |
@@ -372,7 +403,7 @@ make test-live   # opt-in: real YouTube (backend + browser)
 
 - Only non-live videos are supported. Live or upcoming streams and private videos are rejected with an explanation. Age-, member- and paid-restricted videos are rejected unless you've [signed in](#signing-in-opt-in) with an account that can watch them. yt-canvas never asks for passwords and never works around access restrictions.
 - YouTube extraction breaks periodically. Keep `yt-dlp` and `yt-dlp-ejs` updated, and expect HTTP 403/429 or bot checks from some networks, notably cloud IPs.
-- Playback waits for full preparation (no progressive streaming yet). Prepared media up to 720p is stored on local disk.
+- Streaming needs a connection for the whole time you watch. "Download first" waits for full preparation and stores media up to 720p on local disk.
 - Output is always H.264/AAC MP4; VP9/AV1/Opus sources are transcoded, which costs CPU time.
 - Search is capped at 100 results and channels/playlists at 500 items (configurable). Only a channel's "Videos" tab is listed.
 - Favorites, history and the queue are per browser. Signing in (opt-in) reads your YouTube lists and never likes, subscribes or saves to playlists. The only change it can make to your account is adding videos you watch to your YouTube history, and only if you also set `YTC_MARK_WATCHED=true`.

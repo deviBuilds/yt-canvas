@@ -26,6 +26,8 @@ export interface PlayerControlsProps {
   onToggleFullscreen: () => void;
   onPrevious?: () => void;
   onNext?: () => void;
+  /** More rows for the settings menu, below speed and effect. */
+  extraSettings?: ReactNode;
 }
 
 function ControlButton({
@@ -64,7 +66,7 @@ function ControlButton({
 // YouTube's 2026 player groups its controls into translucent pills.
 const PILL = "flex h-10 items-center rounded-full bg-black/30 backdrop-blur-sm";
 
-const selectClass =
+export const selectClass =
   "h-8 cursor-pointer rounded-md border border-white/20 bg-[#1f1f1f] px-2 text-sm text-white outline-none focus-visible:border-white";
 
 export function PlayerControls(props: PlayerControlsProps) {
@@ -218,6 +220,7 @@ export function PlayerControls(props: PlayerControlsProps) {
                   ))}
                 </select>
               </div>
+              {props.extraSettings}
             </div>
           </div>
 

@@ -1,5 +1,5 @@
 import { ExternalLink, Heart, Keyboard, Play, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { ChannelAvatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,20 @@ import { Thumbnail, VideoCard } from "../components/VideoCard";
 import { discoveryApi } from "../discovery/api";
 import { useLibrary } from "../library/LibraryContext";
 import { formatBytes, formatTime, formatViews } from "../lib/format";
+import type { ApiError } from "../api/http";
 import { AmbientGlow } from "../player/AmbientGlow";
+import { selectClass } from "../player/PlayerControls";
+import { attachStream } from "../player/streaming/StreamLoader";
+import {
+  AUTO_HEIGHT,
+  codecLabel,
+  pickTracks,
+  streamQualities,
+  usePlaybackPrefs,
+  useStreamSession,
+  type PlaybackMode,
+  type Quality,
+} from "../player/streaming/useStream";
 import { CanvasPlayer, type DecoderStrategy } from "../player/CanvasPlayer";
 import { SHORTCUT_HELP } from "../player/shortcuts";
 import { PreparationPanel } from "../preparation/PreparationPanel";
@@ -44,6 +57,23 @@ function placeholder(ref: MediaRef): VideoSummary {
     available: true,
     unavailable_reason: null,
   };
+}
+
+/** Shown over the player while a stream session starts (usually a couple of seconds). */
+function StreamLoading() {
+  return (
+    <div
+      className="flex w-full max-w-sm items-center gap-4 rounded-xl bg-[#212121]/95 p-5 text-left text-sm text-white shadow-2xl"
+      role="status"
+      data-testid="stream-loading"
+    >
+      <span className="spinner small shrink-0" aria-hidden="true" />
+      <div>
+        <p className="font-medium">Starting stream…</p>
+        <p className="mt-1 text-xs text-white/60">Plays while it loads; nothing is saved to disk.</p>
+      </div>
+    </div>
+  );
 }
 
 /** The current queue or playlist, like YouTube's playlist panel above "Up next". */
@@ -167,11 +197,23 @@ export function WatchView() {
     [demoId, videoId],
   );
   const refKey = ref ? videoKey(ref) : null;
-  const prep = usePreparation(ref);
+  const ids = useId();
+
+  // Stream (the default) or download first. ?playback= overrides the saved choice on this page.
+  const [playback, setPlayback] = usePlaybackPrefs();
+  const forced = params.get("playback");
+  const mode: PlaybackMode = forced === "stream" || forced === "download" ? forced : playback.mode;
+  // If streaming fails for this video, it falls back to downloading it.
+  const [fallback, setFallback] = useState<{ key: string; reason: string } | null>(null);
+  const streaming = mode === "stream" && typeof MediaSource !== "undefined" && fallback?.key !== refKey;
+  const stream = useStreamSession(streaming ? ref : null);
+  const picks = useMemo(() => (stream.session ? pickTracks(stream.session, playback.quality) : null), [stream.session, playback.quality]);
+  const prep = usePreparation(streaming ? null : ref);
 
   const queued = ref ? queue.items.find((item) => videoKey(item) === refKey) : undefined;
   const fromHistory = ref ? library.historyFor(ref)?.video : undefined;
-  const video: VideoSummary | null = prep.job?.video ?? queued ?? fromHistory ?? (ref ? placeholder(ref) : null);
+  const resolved = prep.job?.video ?? stream.session?.video ?? null;
+  const video: VideoSummary | null = resolved ?? queued ?? fromHistory ?? (ref ? placeholder(ref) : null);
   const playerArea = useRef<HTMLDivElement>(null);
   const videoRef = useRef(video);
   videoRef.current = video;
@@ -194,8 +236,8 @@ export function WatchView() {
   }, [refKey]);
 
   useEffect(() => {
-    if (prep.job?.video) queue.update(prep.job.video);
-  }, [prep.job?.video?.id, prep.job?.video?.title]);
+    if (resolved) queue.update(resolved);
+  }, [resolved?.id, resolved?.title]);
 
   // ?list= from a pasted URL: load the playlist into the queue.
   useEffect(() => {
@@ -240,6 +282,43 @@ export function WatchView() {
     [refKey, recordProgress],
   );
 
+  // Switching quality or mode (or falling back) restarts the source; carry on from here.
+  const keepPosition = () => {
+    const time = unsaved.current?.time;
+    if (time && time > 1) setStartTime(time);
+  };
+  useEffect(() => {
+    if (!streaming || !refKey) return;
+    if (stream.error) setFallback({ key: refKey, reason: stream.error.message });
+    else if (stream.session && !picks) setFallback({ key: refKey, reason: "this browser can't decode any of its streams" });
+  }, [streaming, refKey, stream.error, stream.session, picks]);
+  const onStreamError = useCallback(
+    (error: ApiError) => {
+      keepPosition();
+      if (error.info.code === "stream_expired") stream.renew();
+      else if (refKey) setFallback({ key: refKey, reason: error.message });
+    },
+    [refKey, stream.renew],
+  );
+  const attachSource = useCallback(
+    (media: HTMLVideoElement) => (picks ? attachStream(media, { ...picks, onError: onStreamError }) : () => undefined),
+    [picks, onStreamError],
+  );
+  const changeMode = (next: PlaybackMode) => {
+    keepPosition();
+    setPlayback({ mode: next });
+    if (next === "stream") setFallback(null);
+    if (forced) {
+      const query = new URLSearchParams(params);
+      query.delete("playback");
+      navigate(`/watch?${query.toString()}`, { replace: true });
+    }
+  };
+  const changeQuality = (quality: Quality) => {
+    keepPosition();
+    setPlayback({ quality });
+  };
+
   const related = useRelated(video ?? placeholder({ source: "demo", id: "" }), refKey);
   // Like YouTube, "next" falls back to the first related video when the queue runs out.
   const upNext = queue.hasNext ? null : (related.items[0] ?? null);
@@ -276,6 +355,42 @@ export function WatchView() {
   }
 
   const media = prep.job?.media;
+  const streamSrc = streaming && picks ? `stream:${picks.session.session_id}:${picks.video.id}:${picks.audio.id}` : null;
+  const qualities = streamQualities(streaming ? stream.session : null);
+  const settings = (
+    <>
+      <div className="flex items-center justify-between gap-3 py-1.5">
+        <label htmlFor={`${ids}-mode`}>Playback mode</label>
+        <select
+          id={`${ids}-mode`}
+          className={selectClass}
+          value={streaming ? "stream" : "download"}
+          onChange={(event) => changeMode(event.currentTarget.value as PlaybackMode)}
+        >
+          <option value="stream">Stream</option>
+          <option value="download">Download first</option>
+        </select>
+      </div>
+      {streaming && qualities.length > 0 ? (
+        <div className="flex items-center justify-between gap-3 py-1.5">
+          <label htmlFor={`${ids}-quality`}>Quality</label>
+          <select
+            id={`${ids}-quality`}
+            className={selectClass}
+            value={String(playback.quality)}
+            onChange={(event) => changeQuality(event.currentTarget.value === "auto" ? "auto" : Number(event.currentTarget.value))}
+          >
+            <option value="auto">Auto ({Math.min(AUTO_HEIGHT, qualities[0] ?? AUTO_HEIGHT)}p)</option>
+            {qualities.map((height) => (
+              <option key={height} value={String(height)}>
+                {height}p
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
+    </>
+  );
   const favorite = library.isFavorite(video);
   const views = formatViews(video.view_count);
   const channelRef = video.channel?.ref;
@@ -288,7 +403,9 @@ export function WatchView() {
         <div ref={playerArea} className="relative isolate">
           <AmbientGlow container={playerArea} />
           <CanvasPlayer
-            src={prep.mediaUrl}
+            src={streaming ? streamSrc : prep.mediaUrl}
+            attachSource={streaming ? attachSource : undefined}
+            settings={settings}
             title={video.title}
             artist={video.channel?.name ?? undefined}
             startTime={startTime}
@@ -302,20 +419,24 @@ export function WatchView() {
             onNext={onNext}
             onEnded={onEnded}
             onTimeUpdate={onTimeUpdate}
-            onRetry={prep.retry}
+            onRetry={streaming ? stream.renew : prep.retry}
             badge={
               ref.source === "demo" ? (
                 <span className="rounded bg-black/70 px-2 py-1 text-xs font-medium tracking-wide text-white">DEMO MEDIA · generated locally</span>
               ) : null
             }
             overlay={
-              <PreparationPanel
-                job={prep.job}
-                requestError={prep.requestError}
-                reconnecting={prep.reconnecting}
-                onRetry={prep.retry}
-                onCancel={prep.cancel}
-              />
+              streaming ? (
+                <StreamLoading />
+              ) : (
+                <PreparationPanel
+                  job={prep.job}
+                  requestError={prep.requestError}
+                  reconnecting={prep.reconnecting}
+                  onRetry={prep.retry}
+                  onCancel={prep.cancel}
+                />
+              )
             }
           />
         </div>
@@ -367,7 +488,18 @@ export function WatchView() {
                 Resumed at {formatTime(startTime)} from your history.
               </p>
             ) : null}
-            {media ? (
+            {fallback?.key === refKey ? (
+              <p className="mt-1 text-muted-foreground" role="status">
+                Streaming wasn’t available ({fallback.reason.replace(/\.$/, "")}), so this video is downloading first.
+              </p>
+            ) : null}
+            {streamSrc && picks ? (
+              <p className="mt-1 text-muted-foreground" data-testid="media-details">
+                Streaming {picks.video.height}p · {codecLabel(picks.video.codecs)}/{codecLabel(picks.audio.codecs)}
+                {picks.video.bitrate ? ` · ${(picks.video.bitrate / 1e6).toFixed(1)} Mbps` : ""} · nothing saved to disk ·
+                rendered to canvas
+              </p>
+            ) : media ? (
               <p className="mt-1 text-muted-foreground" data-testid="media-details">
                 Prepared {media.width}×{media.height} · {media.video_codec?.toUpperCase()}/{media.audio_codec?.toUpperCase()} ·{" "}
                 {PROCESSING_LABELS[media.processing]} · {formatBytes(media.size_bytes)} · rendered to canvas

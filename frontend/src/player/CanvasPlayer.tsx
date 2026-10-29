@@ -35,8 +35,15 @@ const OVERLAY_BUTTON =
   "mt-4 inline-flex h-9 cursor-pointer items-center rounded-full bg-white px-4 text-sm font-medium text-black hover:bg-white/85";
 
 export interface CanvasPlayerProps {
-  /** Same-origin URL of a prepared MP4, or null while there is nothing to play. */
+  /**
+   * Same-origin URL of a prepared MP4, or null while there is nothing to play.
+   * With ``attachSource`` it only identifies the source: a change re-attaches.
+   */
   src: string | null;
+  /** Feed the decoder yourself (e.g. a Media Source stream); returns a detach function. */
+  attachSource?: (video: HTMLVideoElement) => () => void;
+  /** Extra rows for the settings menu (e.g. playback mode and quality). */
+  settings?: ReactNode;
   title?: string;
   artist?: string;
   autoPlay?: boolean;
@@ -181,9 +188,16 @@ export function CanvasPlayer(props: CanvasPlayerProps) {
       if (latest.current.autoPlay ?? true) tryPlay();
     };
     video.addEventListener("loadedmetadata", onMetadata, { once: true });
-    video.src = src;
-    video.load();
-    return () => video.removeEventListener("loadedmetadata", onMetadata);
+    const attach = latest.current.attachSource;
+    const detach = attach ? attach(video) : null;
+    if (!attach) {
+      video.src = src;
+      video.load();
+    }
+    return () => {
+      video.removeEventListener("loadedmetadata", onMetadata);
+      detach?.();
+    };
   }, [video, src, tryPlay]);
 
   // Release the decoder when the player unmounts.
@@ -484,6 +498,7 @@ export function CanvasPlayer(props: CanvasPlayerProps) {
         onToggleFullscreen={toggleFullscreen}
         onPrevious={props.onPrevious}
         onNext={props.onNext}
+        extraSettings={props.settings}
       />
     </div>
   );

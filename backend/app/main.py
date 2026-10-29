@@ -29,9 +29,11 @@ from .discovery.youtube_pages import YouTubePagesService
 from .discovery.ytdlp_provider import YtDlpDiscoveryProvider
 from .errors import AppError
 from .media.demo import DemoMediaProvider
+from .media.demo_streams import DemoStreamResolver
 from .media.jobs import JobManager, Processor
 from .media.provider import MediaSourceProvider
 from .media.storage import MediaStorage
+from .media.streams import StreamManager, StreamResolver, YouTubeStreamResolver
 from .media.youtube import YouTubeMediaProvider
 
 log = logging.getLogger("app")
@@ -39,7 +41,7 @@ log = logging.getLogger("app")
 _CSP = (
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
     "img-src 'self' data: https://i.ytimg.com https://*.ytimg.com https://*.ggpht.com "
-    "https://*.googleusercontent.com; media-src 'self'; connect-src 'self'; "
+    "https://*.googleusercontent.com; media-src 'self' blob:; connect-src 'self'; "
     "frame-ancestors 'none'; base-uri 'self'"
 )
 
@@ -121,6 +123,7 @@ async def _cleanup_loop(app: FastAPI) -> None:
             state.storage.evict_expired()
             state.storage.cleanup_workdirs(state.jobs.active_job_ids())
             state.jobs.prune()
+            state.streams.prune()
         except Exception:  # never let housekeeping kill the loop
             log.exception("cache cleanup failed")
 
@@ -155,10 +158,15 @@ def create_app(
         finally:
             cleanup.cancel()
             await app.state.jobs.shutdown()
+            await app.state.streams.shutdown()
 
     app = FastAPI(title="yt-canvas", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
     app.state.storage = storage
+    stream_resolvers: dict[str, StreamResolver] = {"youtube": YouTubeStreamResolver(settings)}
+    if settings.enable_demo:
+        stream_resolvers["demo"] = DemoStreamResolver(settings)
+    app.state.streams = StreamManager(settings, stream_resolvers)
     app.state.discovery = DiscoveryService(settings, discovery_provider or YtDlpDiscoveryProvider(settings))
     # Cookies are only read on demand (never at startup), and only when sign-in is configured.
     cookies = CookieLoader(settings)

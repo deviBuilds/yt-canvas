@@ -54,7 +54,7 @@ class MediaInfo(BaseModel):
     video_codec: str | None = None
     audio_codec: str | None = None
     processing: ProcessingMode
-    # Always "file" in this MVP; a future progressive provider would add "stream".
+    # Always "file"; streaming sessions (app.media.streams) have their own API.
     delivery: Literal["file"] = "file"
 
 
@@ -75,3 +75,41 @@ class JobView(BaseModel):
         "This version downloads and prepares the whole video before playback starts, "
         "so longer videos take longer to become playable."
     )
+
+
+class StreamVideoTrack(BaseModel):
+    """A video-only fragmented-MP4 track, fetched in byte ranges for Media Source Extensions."""
+
+    id: str
+    mime_type: str = "video/mp4"
+    codecs: str
+    width: int | None = None
+    height: int | None = None
+    fps: int | float | None = None
+    bitrate: int | None = None  # bits per second
+    size_bytes: int | None = None
+
+
+class StreamAudioTrack(BaseModel):
+    id: str
+    mime_type: str = "audio/mp4"
+    codecs: str
+    bitrate: int | None = None
+    size_bytes: int | None = None
+    # 2 for stereo, 6 for 5.1; None when yt-dlp doesn't say.
+    channels: int | None = None
+
+
+class StreamView(BaseModel):
+    """``POST /api/streams``: a session whose tracks are read from
+    ``/api/streams/{session_id}/tracks/{track_id}?start=&end=``."""
+
+    session_id: str
+    source: Source
+    video_id: str
+    video: VideoSummary
+    duration_seconds: float | None = None
+    # Highest first (height, then bitrate); audio by bitrate.
+    video_tracks: list[StreamVideoTrack]
+    audio_tracks: list[StreamAudioTrack]
+    expires_at: float

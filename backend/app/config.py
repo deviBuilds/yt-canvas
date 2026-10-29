@@ -158,6 +158,10 @@ class Settings:
     enable_demo: bool = True
     demo_readrate: int = 0  # cap demo generation at N× real time; 0 = as fast as possible
     enable_feeds: bool = True  # curated public YouTube pages (Music, News, ...) and related videos
+    # Streaming playback: YouTube's DASH tracks proxied in byte ranges into Media Source Extensions.
+    enable_streaming: bool = True
+    stream_max_height: int = 2160
+    stream_max_range_bytes: int = 16 * 1024 * 1024
     frontend_dist: Path | None = None
     log_level: str = "INFO"
     # Opt-in YouTube sign-in: yt-dlp reads the account's cookies from a browser profile
@@ -200,6 +204,11 @@ class Settings:
     @property
     def ytdlp_cache_dir(self) -> Path:
         return self.data_dir / "ytdlp-cache"
+
+    @property
+    def streams_dir(self) -> Path:
+        """Locally generated demo streaming tracks (YouTube streams never touch the disk)."""
+        return self.data_dir / "streams"
 
     @property
     def profile(self) -> str:
@@ -259,6 +268,9 @@ def load_settings() -> Settings:
         enable_demo=_bool("YTC_ENABLE_DEMO", True),
         demo_readrate=_int("YTC_DEMO_READRATE", 0, minimum=0),
         enable_feeds=_bool("YTC_ENABLE_FEEDS", True),
+        enable_streaming=_bool("YTC_ENABLE_STREAMING", True),
+        stream_max_height=_int("YTC_STREAM_MAX_HEIGHT", 2160, minimum=144),
+        stream_max_range_bytes=_int("YTC_STREAM_MAX_RANGE_MB", 16, minimum=1) * mb,
         frontend_dist=frontend_dist,
         log_level=_str("YTC_LOG_LEVEL", "INFO").upper(),
         cookies_from_browser=browser_raw or None,
