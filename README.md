@@ -81,11 +81,12 @@ Without a runtime, formats go missing or extraction fails. `GET /api/health` and
   - playlists: `/playlist?list=…`
   - channels: `/channel/UC…`, `/@handle`, `/c/…`, `/user/…`, or a bare `@handle`
   - search URLs: `/results?search_query=…`
-- **Layout:** like YouTube's web app. A top bar with the search box, and a sidebar with Home, your Library (History, Favorites) and Explore (Music, News, Live, Gaming). The sidebar is full width from 1312 px, a 72 px icon rail from 792 px, and a drawer on phones and on the watch page. The appearance menu switches between the device, dark and light themes.
-- **Home** has a row of chips (feeds, recent searches and topic searches), then:
-  - **Continue watching** and **Favorites**, from this browser
-  - shelves from YouTube's **public Music, News, Live and Gaming pages** (see [Home feeds](#home-feeds-and-related-videos))
-  - **More from &lt;channel&gt;** and **Because you searched “…”**, built only from this browser's history. yt-canvas never signs in, so there are no personalized YouTube recommendations.
+- **Layout:** like YouTube's web app, matched to its measured sizes:
+  - **Top bar:** a single-pill search box with a mic button for voice search (where the browser supports speech recognition), and an avatar menu with the Library pages and the device, dark or light theme.
+  - **Sidebar:** Home, your Library (History, Favorites) and Explore (Music, News, Live, Gaming). It's full width from 1312 px, a 72 px icon rail from 792 px, and a drawer on phones and on the watch page.
+- **Home** has a row of chips (feeds, recent searches and topic searches), then one continuous grid of videos, as on YouTube. **Continue watching** appears as a shelf after the first row. The grid mixes:
+  - YouTube's **public Music, News, Live and Gaming pages** (see [Home feeds](#home-feeds-and-related-videos))
+  - more videos from the channels you watch most and from your latest search, taken only from this browser's history. yt-canvas never signs in, so there are no personalized YouTube recommendations.
 - **Search results** use YouTube's list layout; channels and playlists have their own headers with **Play all** (and **Shuffle** for playlists). Every card has a ⋮ menu: add to queue, save to Favorites, remove from history, open on YouTube.
 - **Watch page:** the canvas player has:
   - play/pause, seek, volume/mute, previous/next and fullscreen, plus a settings gear with speed (0.25–2×) and the visual effect

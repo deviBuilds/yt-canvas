@@ -1,18 +1,19 @@
-import { ChevronRight } from "lucide-react";
-import { useCallback, useMemo } from "react";
+import { ChevronRight, History } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { ChipBar, type Chip } from "@/components/ChipBar";
-import { Shelf, VideoShelf } from "@/components/Shelf";
-import { LoadingGrid } from "@/components/StateViews";
+import { useColumns, VideoShelf } from "@/components/Shelf";
+import { EmptyState, LoadingGrid } from "@/components/StateViews";
+import { AutoLoad, VideoGrid } from "@/components/VideoGrid";
 import { feedsApi } from "@/feeds/api";
 import { feedPath, FEEDS, useEnabledFeeds } from "@/feeds/feeds";
 import { useCachedRequest } from "@/lib/useCachedRequest";
 
-import type { VideoSummary } from "../api/types";
+import { videoKey, type VideoSummary } from "../api/types";
 import { discoveryApi } from "../discovery/api";
 import { useLibrary } from "../library/LibraryContext";
-import { channelPath, Link, searchPath } from "../router/router";
+import { Link, searchPath } from "../router/router";
 
 /** Fixed keyword searches offered as chips; each one is an ordinary YouTube search. */
 export const TOPIC_SHORTCUTS = [
@@ -51,81 +52,44 @@ function ViewAll({ to, label = "View all" }: { to: string; label?: string }) {
   );
 }
 
-function ShelfError({ title, message, onRetry }: { title: string; message: string; onRetry: () => void }) {
-  return (
-    <Shelf title={title}>
-      <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground" role="alert">
-        <span>{message}</span>
-        <Button variant="outline" size="sm" onClick={onRetry}>
-          Try again
-        </Button>
-      </div>
-    </Shelf>
-  );
+const NONE: VideoSummary[] = [];
+
+// Each source of home videos, loaded once per session (see useCachedRequest).
+function useFeedItems(id: string | null) {
+  const fetcher = useCallback((signal: AbortSignal) => feedsApi.get(id ?? "", signal), [id]);
+  const { data, loading } = useCachedRequest(id ? `feed:${id}` : null, fetcher);
+  const items = useMemo(() => (data ? data.shelves.flatMap((shelf) => shelf.items) : NONE), [data]);
+  return { items, loading };
 }
 
-function LoadingShelf({ title }: { title: string }) {
-  return (
-    <Shelf title={title}>
-      <LoadingGrid count={4} label={`Loading ${title}…`} />
-    </Shelf>
-  );
+function useChannelItems(ref: string | null) {
+  const fetcher = useCallback((signal: AbortSignal) => discoveryApi.channel(ref ?? "", 0, signal), [ref]);
+  const { data, loading } = useCachedRequest(ref ? `channel:${ref}` : null, fetcher);
+  return { items: data?.items ?? NONE, loading };
 }
 
-/** The first shelf of a public YouTube feed, with a link to the whole feed. */
-function FeedPreview({ id }: { id: string }) {
-  const feed = FEEDS.find((f) => f.id === id)!;
-  const fetcher = useCallback((signal: AbortSignal) => feedsApi.get(id, signal), [id]);
-  const { data, error, loading, retry } = useCachedRequest(`feed:${id}`, fetcher);
-  const Icon = feed.icon;
-  if (loading) return <LoadingShelf title={feed.title} />;
-  if (error) return <ShelfError title={feed.title} message={`Couldn't load ${feed.title} from YouTube: ${error.message}`} onRetry={retry} />;
-  const shelf = data?.shelves.find((s) => s.items.length > 0);
-  if (!shelf) return null;
-  return (
-    <VideoShelf
-      title={shelf.title ?? feed.title}
-      icon={<Icon className="size-6" aria-hidden="true" />}
-      subtitle={`${feed.title} on YouTube`}
-      items={shelf.items}
-      rows={1}
-      action={<ViewAll to={feedPath(id)} label={`More ${feed.title.toLowerCase()}`} />}
-    />
-  );
+function useSearchItems(query: string | null) {
+  const fetcher = useCallback((signal: AbortSignal) => discoveryApi.search(query ?? "", 0, signal), [query]);
+  const { data, loading } = useCachedRequest(query ? `search:${query}` : null, fetcher);
+  return { items: data?.items ?? NONE, loading };
 }
 
-/** "More from <channel>": recommendations built only from this browser's history. */
-function ChannelRecommendation({ channelRef, name, exclude }: { channelRef: string; name: string; exclude: Set<string> }) {
-  const fetcher = useCallback((signal: AbortSignal) => discoveryApi.channel(channelRef, 0, signal), [channelRef]);
-  const { data, loading } = useCachedRequest(`channel:${channelRef}`, fetcher);
-  if (loading) return <LoadingShelf title={`More from ${name}`} />;
-  const items = (data?.items ?? []).filter((v) => !exclude.has(v.id));
-  if (items.length === 0) return null;
-  return (
-    <VideoShelf
-      title={`More from ${name}`}
-      subtitle="Because you watched this channel"
-      items={items}
-      rows={1}
-      action={<ViewAll to={channelPath(channelRef)} />}
-    />
-  );
-}
-
-function SearchRecommendation({ query, exclude }: { query: string; exclude: Set<string> }) {
-  const fetcher = useCallback((signal: AbortSignal) => discoveryApi.search(query, 0, signal), [query]);
-  const { data, loading } = useCachedRequest(`search:${query}`, fetcher);
-  if (loading) return <LoadingShelf title={`Because you searched “${query}”`} />;
-  const items = (data?.items ?? []).filter((v) => !exclude.has(v.id));
-  if (items.length === 0) return null;
-  return (
-    <VideoShelf
-      title={`Because you searched “${query}”`}
-      items={items}
-      rows={1}
-      action={<ViewAll to={searchPath(query)} />}
-    />
-  );
+/** Round-robin over the sources, like YouTube's mixed home feed; drops repeats and what can't play. */
+function interleave(lists: VideoSummary[][], skip: Set<string>): VideoSummary[] {
+  const out: VideoSummary[] = [];
+  const seen = new Set(skip);
+  const longest = Math.max(0, ...lists.map((list) => list.length));
+  for (let i = 0; i < longest; i++) {
+    for (const list of lists) {
+      const video = list[i];
+      if (!video || !video.available || video.live_status === "is_live" || video.live_status === "is_upcoming") continue;
+      const key = videoKey(video);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(video);
+    }
+  }
+  return out;
 }
 
 /** Channels the user watched most often in this browser, most-watched first. */
@@ -144,54 +108,102 @@ function topChannels(history: Array<{ video: VideoSummary }>, limit: number) {
     .map(([ref, { name }]) => ({ ref, name }));
 }
 
+// Show what has loaded after this long rather than waiting on a slow source.
+const SETTLE_MS = 5000;
+
+/**
+ * YouTube's home: one continuous grid of videos, with "Continue watching" as a
+ * special shelf after the first row. The grid mixes YouTube's public Music,
+ * News, Live and Gaming pages with "more from" channels and the latest search
+ * from this browser's history; yt-canvas never signs in, so nothing here is
+ * YouTube's personal recommendation.
+ */
 export function HomeView() {
   const library = useLibrary();
+  const { continueWatching, history, searches } = library;
   const { feeds, known } = useEnabledFeeds();
-  // Wait for the server's list so a disabled feed never flashes an error.
-  const feedOn = (id: string) => known && feeds.some((feed) => feed.id === id);
-  const { continueWatching, favorites, history, searches } = library;
-  const watched = useMemo(() => new Set(history.map((h) => h.video.id)), [history]);
+  // Wait for the server's list so a disabled feed is never requested.
+  const feedOn = (id: string) => (known && feeds.some((feed) => feed.id === id) ? id : null);
   const channels = useMemo(() => topChannels(history, 2), [history]);
-  const lastSearch = searches[0]?.query;
+
+  const sources = [
+    useChannelItems(channels[0]?.ref ?? null),
+    useFeedItems(feedOn("music")),
+    useFeedItems(feedOn("news")),
+    useSearchItems(searches[0]?.query ?? null),
+    useChannelItems(channels[1]?.ref ?? null),
+    useFeedItems(feedOn("live")),
+    useFeedItems(feedOn("gaming")),
+  ];
+  const lists = sources.map((source) => source.items);
+  const settled = known && sources.every((source) => !source.loading);
+  const watched = useMemo(() => new Set(history.map((h) => videoKey(h.video))), [history]);
+
+  const [timedOut, setTimedOut] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setTimedOut(true), SETTLE_MS);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  // Fix the order once everything has loaded (or SETTLE_MS passed), so cards don't
+  // jump around; anything that arrives later goes to the end.
+  const [order, setOrder] = useState<VideoSummary[] | null>(null);
+  useEffect(() => {
+    if (!settled && !timedOut) return;
+    const mixed = interleave(lists, watched);
+    setOrder((previous) => {
+      if (!previous) return mixed;
+      const have = new Set(previous.map(videoKey));
+      const extra = mixed.filter((video) => !have.has(videoKey(video)));
+      return extra.length ? [...previous, ...extra] : previous;
+    });
+    // ``lists`` holds memoized arrays, so their identities are the real dependencies.
+  }, [settled, timedOut, watched, ...lists]);
+
+  const { ref, columns } = useColumns();
+  const [rows, setRows] = useState(4);
+  const inProgress = useMemo(() => new Set(continueWatching.map((h) => videoKey(h.video))), [continueWatching]);
+  const videos = (order ?? []).filter((video) => !inProgress.has(videoKey(video)));
+  const first = videos.slice(0, columns);
+  const rest = videos.slice(columns, columns * rows);
   const progress = useMemo(() => {
-    const map = new Map(continueWatching.map((h) => [`${h.video.source}:${h.video.id}`, h.duration ? h.position / h.duration : null]));
-    return (video: VideoSummary) => map.get(`${video.source}:${video.id}`) ?? null;
+    const map = new Map(continueWatching.map((h) => [videoKey(h.video), h.duration ? h.position / h.duration : null]));
+    return (video: VideoSummary) => map.get(videoKey(video)) ?? null;
   }, [continueWatching]);
 
   return (
     <div className="px-4 pb-12 sm:px-6">
       <ChipBar label="Topics" chips={homeChips(null, searches.slice(0, 4).map((s) => s.query), feeds)} />
+      <div ref={ref}>
+        {order === null ? <LoadingGrid count={columns * 2} className="pt-6" /> : null}
+        {first.length > 0 ? <VideoGrid items={first} className="pt-6" /> : null}
 
-      {continueWatching.length > 0 ? (
-        <VideoShelf
-          title="Continue watching"
-          items={continueWatching.map((h) => h.video)}
-          rows={1}
-          progressFor={progress}
-          onRemove={(video) => library.removeFromHistory(video)}
-          removeLabel="Remove from history"
-          action={<ViewAll to="/history" />}
-        />
-      ) : null}
+        {continueWatching.length > 0 ? (
+          <VideoShelf
+            title="Continue watching"
+            icon={<History className="size-6" aria-hidden="true" />}
+            items={continueWatching.map((h) => h.video)}
+            rows={1}
+            progressFor={progress}
+            onRemove={(video) => library.removeFromHistory(video)}
+            removeLabel="Remove from history"
+            action={<ViewAll to="/history" />}
+          />
+        ) : null}
 
-      {feedOn("music") ? <FeedPreview id="music" /> : null}
-      {channels[0] ? <ChannelRecommendation channelRef={channels[0].ref} name={channels[0].name} exclude={watched} /> : null}
-      {feedOn("news") ? <FeedPreview id="news" /> : null}
-      {lastSearch ? <SearchRecommendation query={lastSearch} exclude={watched} /> : null}
-      {channels[1] ? <ChannelRecommendation channelRef={channels[1].ref} name={channels[1].name} exclude={watched} /> : null}
-      {feedOn("live") ? <FeedPreview id="live" /> : null}
+        {rest.length > 0 ? <VideoGrid items={rest} className="pt-6" /> : null}
+        {videos.length > columns * rows ? (
+          <div className="py-8">
+            <AutoLoad onVisible={() => setRows((n) => n + 4)} disabled={false} />
+          </div>
+        ) : null}
 
-      {favorites.length > 0 ? (
-        <VideoShelf title="Favorites" items={favorites.map((f) => f.video)} rows={1} action={<ViewAll to="/favorites" />} />
-      ) : null}
-
-      {feedOn("gaming") ? <FeedPreview id="gaming" /> : null}
-
-      <p className="pt-6 text-xs text-muted-foreground">
-        Shelves come from YouTube’s public Music, News, Live and Gaming pages. “More from” and “Because you searched”
-        use only the history saved in this browser. yt-canvas never signs in to YouTube, so there are no personalized
-        YouTube recommendations.
-      </p>
+        {order !== null && videos.length === 0 && continueWatching.length === 0 ? (
+          <EmptyState title="Try searching to get started">
+            Start watching videos to build a feed of videos you’ll love.
+          </EmptyState>
+        ) : null}
+      </div>
     </div>
   );
 }

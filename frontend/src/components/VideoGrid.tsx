@@ -31,7 +31,7 @@ export function VideoGrid({
 }
 
 /** Loads the next page when the sentinel scrolls into view, like YouTube's endless lists. */
-function AutoLoad({ onVisible, disabled }: { onVisible: () => void; disabled: boolean }) {
+export function AutoLoad({ onVisible, disabled }: { onVisible: () => void; disabled: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const callback = useRef(onVisible);
   callback.current = onVisible;

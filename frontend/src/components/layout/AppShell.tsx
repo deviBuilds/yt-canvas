@@ -1,13 +1,15 @@
-import { CircleUserRound, Compass, Heart, History, House, Library, Menu, Monitor, Moon, Sun, type LucideIcon } from "lucide-react";
+import { CircleUserRound, Compass, Heart, History, Library, Menu, UserRound, type LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
@@ -20,23 +22,51 @@ import { Link, useRouter } from "@/router/router";
 import { useTheme, type ThemeMode } from "@/theme/ThemeContext";
 
 import { SearchBar } from "../SearchBar";
+import { HomeIcon } from "./HomeIcon";
 import { Logo } from "./Logo";
 
 const GUIDE_KEY = "ytc.guide.v1";
 
-function ThemeMenu() {
-  const { mode, dark, setMode } = useTheme();
-  const Icon = mode === "system" ? Monitor : dark ? Moon : Sun;
+/**
+ * The avatar menu at the top right, where YouTube keeps your account. yt-canvas
+ * has no accounts, so it holds the library pages and the appearance setting.
+ */
+function AccountMenu() {
+  const { mode, setMode } = useTheme();
+  const { navigate } = useRouter();
+  const avatar = (size: string) => (
+    <span className={cn("flex shrink-0 items-center justify-center rounded-full bg-[#7e57c2] text-white", size)}>
+      <UserRound className="size-[60%]" strokeWidth={2} aria-hidden="true" />
+    </span>
+  );
   return (
     <DropdownMenu>
-      <Tip label="Appearance">
+      <Tip label="You">
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" aria-label="Appearance">
-            <Icon />
-          </Button>
+          <button type="button" aria-label="Library and appearance" className="ml-2 flex size-10 cursor-pointer items-center justify-center rounded-full">
+            {avatar("size-8")}
+          </button>
         </DropdownMenuTrigger>
       </Tip>
-      <DropdownMenuContent align="end">
+      <DropdownMenuContent align="end" className="w-72">
+        <div className="flex items-center gap-4 px-4 pb-3 pt-2">
+          {avatar("size-10")}
+          <div className="min-w-0">
+            <p className="font-medium">You</p>
+            <p className="text-sm text-muted-foreground">Saved in this browser</p>
+          </div>
+        </div>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => navigate("/library")}>
+          <Library /> Library
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => navigate("/history")}>
+          <History /> History
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => navigate("/favorites")}>
+          <Heart /> Favorites
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
         <DropdownMenuLabel>Appearance</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={mode} onValueChange={(value) => setMode(value as ThemeMode)}>
           <DropdownMenuRadioItem value="system">Use device theme</DropdownMenuRadioItem>
@@ -52,7 +82,7 @@ function isActive(path: string, to: string) {
   return to === "/" ? path === "/" : path === to || path.startsWith(`${to}/`);
 }
 
-function GuideEntry({ to, icon: Icon, label, onNavigate }: { to: string; icon: LucideIcon; label: string; onNavigate?: () => void }) {
+function GuideEntry({ to, icon: Icon, label, onNavigate }: { to: string; icon: LucideIcon | "home"; label: string; onNavigate?: () => void }) {
   const { path } = useRouter();
   const active = isActive(path, to);
   return (
@@ -65,7 +95,11 @@ function GuideEntry({ to, icon: Icon, label, onNavigate }: { to: string; icon: L
         active && "bg-secondary font-medium hover:bg-secondary-hover",
       )}
     >
-      <Icon className="size-6 shrink-0" strokeWidth={active ? 2.25 : 1.75} aria-hidden="true" />
+      {Icon === "home" ? (
+        <HomeIcon className="size-6 shrink-0" filled={active} />
+      ) : (
+        <Icon className="size-6 shrink-0" strokeWidth={active ? 2.25 : 1.75} aria-hidden="true" />
+      )}
       <span className="truncate">{label}</span>
     </Link>
   );
@@ -86,7 +120,7 @@ function Guide({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <nav aria-label="Main" className="flex flex-col">
       <GuideSection>
-        <GuideEntry to="/" icon={House} label="Home" onNavigate={onNavigate} />
+        <GuideEntry to="/" icon="home" label="Home" onNavigate={onNavigate} />
       </GuideSection>
       <GuideSection title="You">
         <GuideEntry to="/library" icon={Library} label="Library" onNavigate={onNavigate} />
@@ -108,16 +142,20 @@ function Guide({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
-function RailEntry({ to, icon: Icon, label }: { to: string; icon: LucideIcon; label: string }) {
+function RailEntry({ to, icon: Icon, label }: { to: string; icon: LucideIcon | "home"; label: string }) {
   const { path } = useRouter();
   const active = isActive(path, to) || (to.startsWith("/feed/") && path.startsWith("/feed/"));
   return (
     <Link
       to={to}
       aria-current={active ? "page" : undefined}
-      className="flex w-16 flex-col items-center gap-1.5 rounded-[10px] pb-3.5 pt-4 text-[10px] hover:bg-secondary"
+      className="flex h-[76px] w-16 flex-col items-center gap-1.5 rounded-[10px] pt-4 text-[10px] hover:bg-secondary"
     >
-      <Icon className="size-6" strokeWidth={active ? 2.25 : 1.75} aria-hidden="true" />
+      {Icon === "home" ? (
+        <HomeIcon className="size-6" filled={active} />
+      ) : (
+        <Icon className="size-6" strokeWidth={active ? 2.25 : 1.75} aria-hidden="true" />
+      )}
       <span className="max-w-full truncate">{label}</span>
     </Link>
   );
@@ -127,8 +165,8 @@ function RailEntry({ to, icon: Icon, label }: { to: string; icon: LucideIcon; la
 function MiniGuide() {
   const { feeds } = useEnabledFeeds();
   return (
-    <nav aria-label="Main" className="flex flex-col items-center gap-1 px-1 pt-1">
-      <RailEntry to="/" icon={House} label="Home" />
+    <nav aria-label="Main" className="flex flex-col items-center px-1 pt-1">
+      <RailEntry to="/" icon="home" label="Home" />
       {feeds[0] ? <RailEntry to={feedPath(feeds[0].id)} icon={Compass} label="Explore" /> : null}
       <RailEntry to="/library" icon={CircleUserRound} label="You" />
     </nav>
@@ -178,15 +216,9 @@ export function AppShell({ banner, children }: { banner?: ReactNode; children: R
           <Logo />
         </div>
         <SearchBar />
-        <div className="flex shrink-0 items-center gap-1">
-          <ThemeMenu />
-          <Tip label="Library">
-            <Button asChild variant="ghost" size="icon" className="hidden sm:inline-flex">
-              <Link to="/library" aria-label="Library">
-                <CircleUserRound />
-              </Link>
-            </Button>
-          </Tip>
+        {/* As wide as YouTube's Create / notifications / avatar group, so the search box lands where YouTube's does. */}
+        <div className="flex shrink-0 items-center justify-end lg:min-w-[225px]">
+          <AccountMenu />
         </div>
       </header>
 

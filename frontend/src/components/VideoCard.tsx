@@ -82,7 +82,7 @@ function CardMenu({ video, onRemove, removeLabel }: { video: VideoSummary; onRem
           variant="ghost"
           size="icon"
           aria-label="Action menu"
-          className="-mr-2.5 -mt-1.5 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100"
+          className="-mr-2.5 -mt-1.5"
         >
           <EllipsisVertical />
         </Button>

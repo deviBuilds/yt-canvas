@@ -27,7 +27,8 @@ export function Shelf({
   const id = useId();
   return (
     <section aria-labelledby={id} className={cn("pb-4 pt-6", className)}>
-      <header className="mb-4 flex items-end justify-between gap-4">
+      {/* YouTube's shelf header: 40 px tall, icon inset 8 px, bold 20 px title. */}
+      <header className={cn("mb-4 flex min-h-10 items-center justify-between gap-4", icon && "pl-2")}>
         <div className="min-w-0">
           <h2 id={id} className="flex items-center gap-2 text-xl font-bold">
             {icon}
@@ -43,7 +44,7 @@ export function Shelf({
 }
 
 /** How many cards fit in one row of ``GRID_CLASS`` at the element's current width. */
-function useColumns() {
+export function useColumns() {
   const ref = useRef<HTMLDivElement>(null);
   const [columns, setColumns] = useState(4);
   useEffect(() => {

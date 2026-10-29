@@ -229,9 +229,12 @@ test("favorites and continue watching persist in localStorage", async ({ page })
   await page.getByRole("link", { name: "yt-canvas home" }).click();
   const continueShelf = page.getByRole("region", { name: "Continue watching" });
   await expect(continueShelf.getByText("DEMO · Test pattern (16:9, 20 s)")).toBeVisible();
+
+  // Favorites live in the library, as on YouTube.
+  await page.goto("/library");
   await expect(page.getByRole("region", { name: "Favorites" }).getByText("DEMO · Test pattern (16:9, 20 s)")).toBeVisible();
 
-  await page.reload();
+  await page.goto("/");
   await expect(page.getByRole("region", { name: "Continue watching" })).toBeVisible();
 
   // Resuming starts near the saved position.
