@@ -26,7 +26,7 @@ export function Shelf({
 }) {
   const id = useId();
   return (
-    <section aria-labelledby={id} className={cn("border-b border-border pb-8 pt-6 last:border-b-0", className)}>
+    <section aria-labelledby={id} className={cn("pb-4 pt-6", className)}>
       <header className="mb-4 flex items-end justify-between gap-4">
         <div className="min-w-0">
           <h2 id={id} className="flex items-center gap-2 text-xl font-bold">
@@ -102,9 +102,8 @@ export function VideoShelf({
         ))}
       </div>
       {items.length > initial ? (
-        <div className="relative mt-6 flex justify-center">
-          <span className="absolute inset-x-0 top-1/2 h-px bg-border" aria-hidden="true" />
-          <Button variant="secondary" className="relative border border-border bg-background" onClick={() => setExpanded((e) => !e)}>
+        <div className="mt-6 flex justify-center">
+          <Button variant="secondary" onClick={() => setExpanded((e) => !e)}>
             {expanded ? "Show less" : "Show more"} {expanded ? <ChevronUp /> : <ChevronDown />}
           </Button>
         </div>

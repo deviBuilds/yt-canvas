@@ -281,7 +281,7 @@ export function WatchView() {
   const showQueue = queue.items.length > 1 || Boolean(queue.label);
 
   return (
-    <div className="mx-auto flex max-w-[1754px] flex-col gap-6 pb-12 sm:px-6 sm:pt-6 lg:flex-row lg:items-start">
+    <div className="mx-auto flex max-w-[1754px] flex-col gap-4 pb-12 sm:px-4 sm:pt-3 lg:flex-row lg:items-start">
       <div className="min-w-0 flex-1 [--player-radius:0px] sm:[--player-radius:12px]">
         <CanvasPlayer
           src={prep.mediaUrl}
@@ -330,13 +330,13 @@ export function WatchView() {
               )}
               <div className="min-w-0">
                 {channelRef ? (
-                  <Link to={channelPath(channelRef)} className="block truncate text-base font-medium">
+                  <Link to={channelPath(channelRef)} className="block truncate text-base font-medium leading-[22px]">
                     {channelName}
                   </Link>
                 ) : (
-                  <span className="block truncate text-base font-medium">{channelName}</span>
+                  <span className="block truncate text-base font-medium leading-[22px]">{channelName}</span>
                 )}
-                {video.channel?.handle ? <span className="block truncate text-xs text-muted-foreground">{video.channel.handle}</span> : null}
+                {video.channel?.handle ? <span className="block truncate text-xs leading-[18px] text-muted-foreground">{video.channel.handle}</span> : null}
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -394,7 +394,7 @@ export function WatchView() {
         </section>
       </div>
 
-      <div className="w-full shrink-0 px-3 sm:px-0 lg:w-[402px]">
+      <div className="w-full shrink-0 px-3 sm:px-0 lg:w-[396px]">
         {showQueue ? <QueuePanel /> : null}
         <RelatedList items={related.items} loading={related.loading} fromChannel={related.fromChannel} channelName={video.channel?.name} />
       </div>

@@ -63,12 +63,13 @@ export function SearchView() {
   if (!q) return <EmptyState title="Search YouTube">Type keywords or paste a link in the search bar above.</EmptyState>;
 
   return (
-    <div className="mx-auto max-w-[1096px] px-4 py-4 sm:px-6">
-      <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
+    <div className="px-4 pb-6 sm:px-6">
+      {/* YouTube's search page opens with a sticky row of filter chips. */}
+      <header className="sticky top-14 z-20 flex h-14 items-center justify-between gap-3 bg-background">
         <h1 className="sr-only">Search results for “{q}”</h1>
-        <p className="text-sm text-muted-foreground" aria-hidden="true">
-          Results for <span className="font-medium text-foreground">“{q}”</span>
-        </p>
+        <span className="flex h-8 items-center rounded-lg bg-chip-active px-3 text-sm font-medium text-chip-active-foreground" aria-hidden="true">
+          All
+        </span>
         <PlayAllButton items={state.items} label={`Search: ${q}`} variant="secondary" />
       </header>
       <PagedResults
@@ -94,17 +95,17 @@ export function ChannelView() {
   if (!ref) return <EmptyState title="No channel selected" />;
 
   return (
-    <div className="mx-auto max-w-[1284px] px-4 sm:px-6">
-      <header className="flex flex-col items-center gap-4 py-6 text-center sm:flex-row sm:items-center sm:gap-6 sm:text-left">
+    <div className="mx-auto max-w-[1074px] px-4 lg:px-0">
+      <header className="flex flex-col items-center gap-4 pb-1 pt-4 text-center sm:flex-row sm:items-center sm:text-left">
         <ChannelAvatar name={name} src={avatar} className="size-24 text-4xl sm:size-40 sm:text-6xl" />
         <div className="min-w-0 flex-1">
           <p className="sr-only">Channel</p>
-          <h1 className="text-3xl font-bold sm:text-4xl">{name}</h1>
+          <h1 className="text-3xl font-bold sm:text-4xl sm:leading-[50px]">{name}</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            {channel?.handle ?? ref}
+            <span className="font-medium text-foreground">{channel?.handle ?? ref}</span>
             {state.page?.total_count ? ` • ${state.page.total_count} videos` : ""}
           </p>
-          <div className="mt-4 flex flex-wrap justify-center gap-2 sm:justify-start">
+          <div className="mt-3 flex flex-wrap justify-center gap-2 sm:justify-start">
             <PlayAllButton items={state.items} label={`Channel: ${name}`} />
             <Button asChild variant="secondary">
               <a href={external} target="_blank" rel="noreferrer noopener">
@@ -114,10 +115,10 @@ export function ChannelView() {
           </div>
         </div>
       </header>
-      <div className="mb-6 flex gap-6 border-b border-border">
-        <h2 className="border-b-2 border-foreground pb-3 text-base font-medium">Videos</h2>
+      <div className="mb-6 flex h-12 gap-6 border-b border-border">
+        <h2 className="flex items-center border-b-2 border-foreground text-base font-medium leading-[22px]">Videos</h2>
       </div>
-      <PagedResults state={state} emptyTitle="No videos" emptyBody="This channel has no public videos to list." />
+      <PagedResults state={state} hideChannel emptyTitle="No videos" emptyBody="This channel has no public videos to list." />
     </div>
   );
 }

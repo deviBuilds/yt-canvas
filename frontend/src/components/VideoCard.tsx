@@ -1,5 +1,5 @@
 import { EllipsisVertical, ExternalLink, Heart, ListPlus, Play, Trash2 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 
 import { ChannelAvatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 
 import type { VideoSummary } from "../api/types";
 import { useLibrary } from "../library/LibraryContext";
-import { formatTime, formatViews } from "../lib/format";
+import { formatCount, formatTime } from "../lib/format";
 import { useQueue } from "../queue/QueueContext";
 import { channelPath, Link, watchPath } from "../router/router";
 
@@ -53,11 +53,11 @@ export function Thumbnail({
         </div>
       )}
       {live ? (
-        <span className="absolute bottom-1 right-1 rounded bg-brand px-1 text-xs font-medium leading-[18px] text-white">
+        <span className="absolute bottom-2 right-2 rounded bg-brand px-1 py-px text-xs font-medium leading-[18px] text-white">
           {video.live_status === "is_live" ? "LIVE" : "UPCOMING"}
         </span>
       ) : video.duration_seconds ? (
-        <span className="absolute bottom-1 right-1 rounded bg-overlay px-1 text-xs font-medium leading-[18px] text-white">
+        <span className="absolute bottom-2 right-2 rounded bg-overlay px-1 py-px text-xs font-medium leading-[18px] text-white">
           {formatTime(video.duration_seconds)}
         </span>
       ) : null}
@@ -80,9 +80,9 @@ function CardMenu({ video, onRemove, removeLabel }: { video: VideoSummary; onRem
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost"
-          size="icon-sm"
+          size="icon"
           aria-label="Action menu"
-          className="-mr-2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100"
+          className="-mr-2.5 -mt-1.5 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100"
         >
           <EllipsisVertical />
         </Button>
@@ -114,15 +114,25 @@ function CardMenu({ video, onRemove, removeLabel }: { video: VideoSummary; onRem
   );
 }
 
-function MetaLine({ video, children }: { video: VideoSummary; children?: ReactNode }) {
-  const views = formatViews(video.view_count);
-  const parts = [views, video.published_text].filter(Boolean);
-  if (parts.length === 0 && !children) return null;
+/**
+ * Views and age the way YouTube shows them now: "▷ 1.2M  2w ago" (with
+ * ``icon``) or "1.2M • 2w ago" (search results).
+ */
+function Stats({ video, icon = true }: { video: VideoSummary; icon?: boolean }) {
+  const count = formatCount(video.view_count);
+  if (!count && !video.published_text) return null;
   return (
-    <p className="truncate">
-      {parts.join(" • ")}
-      {children}
-    </p>
+    <span className="inline-flex min-w-0 items-center gap-2">
+      {count ? (
+        <span className="inline-flex items-center gap-1 whitespace-nowrap">
+          {icon ? <Play className="size-3" aria-hidden="true" /> : null}
+          {count}
+          <span className="sr-only"> views</span>
+        </span>
+      ) : null}
+      {count && video.published_text && !icon ? <span aria-hidden="true">•</span> : null}
+      {video.published_text ? <span className="truncate">{video.published_text}</span> : null}
+    </span>
   );
 }
 
@@ -160,6 +170,8 @@ export interface VideoCardProps {
   onRemove?: () => void;
   removeLabel?: string;
   variant?: CardVariant;
+  /** Channel pages leave out the avatar and channel name, as YouTube does. */
+  hideChannel?: boolean;
   className?: string;
 }
 
@@ -167,7 +179,16 @@ export interface VideoCardProps {
  * A video in YouTube's three card shapes: ``grid`` (home, channel), ``list``
  * (search results) and ``compact`` (the watch page's side column).
  */
-export function VideoCard({ video, onPlay, progress, onRemove, removeLabel = "Remove", variant = "grid", className }: VideoCardProps) {
+export function VideoCard({
+  video,
+  onPlay,
+  progress,
+  onRemove,
+  removeLabel = "Remove",
+  variant = "grid",
+  hideChannel = false,
+  className,
+}: VideoCardProps) {
   const queue = useQueue();
   const live = isLive(video);
   const playable = video.available && !live;
@@ -191,8 +212,8 @@ export function VideoCard({ video, onPlay, progress, onRemove, removeLabel = "Re
     );
   }
 
-  const thumbLink = (thumbClass?: string) => (
-    <Link to={href} className="card-link block shrink-0" tabIndex={-1} aria-hidden="true" onClick={play}>
+  const thumbLink = (thumbClass?: string, linkClass?: string) => (
+    <Link to={href} className={cn("card-link block shrink-0", linkClass)} tabIndex={-1} aria-hidden="true" onClick={play}>
       <Thumbnail video={video} progress={progress} className={thumbClass} />
     </Link>
   );
@@ -204,14 +225,14 @@ export function VideoCard({ video, onPlay, progress, onRemove, removeLabel = "Re
 
   if (variant === "compact") {
     return (
-      <article className={cn("card group relative flex gap-2", className)}>
-        {thumbLink("w-[168px] rounded-lg")}
+      <article className={cn("card group relative flex gap-3", className)}>
+        {thumbLink("rounded-lg", "w-[62.5%] max-w-[248px]")}
         <div className="flex min-w-0 flex-1 gap-1">
           <div className="min-w-0 flex-1">
-            <h3 className="card-title line-clamp-2 text-sm font-medium leading-5">{titleLink}</h3>
+            <h3 className="card-title line-clamp-3 text-sm font-medium leading-5">{titleLink}</h3>
             <div className="mt-1 text-xs leading-[18px] text-muted-foreground">
               <ChannelName video={video} />
-              <MetaLine video={video} />
+              <Stats video={video} />
             </div>
           </div>
           <CardMenu video={video} onRemove={onRemove} removeLabel={removeLabel} />
@@ -223,14 +244,14 @@ export function VideoCard({ video, onPlay, progress, onRemove, removeLabel = "Re
   if (variant === "list") {
     return (
       <article className={cn("card group relative flex flex-col gap-3 sm:flex-row sm:gap-4", className)}>
-        {thumbLink("sm:w-90 sm:max-w-[45vw]")}
+        {thumbLink(undefined, "sm:min-w-60 sm:max-w-[500px] sm:flex-1")}
         <div className="flex min-w-0 flex-1 gap-1">
           <div className="min-w-0 flex-1">
             <h3 className="card-title line-clamp-2 text-lg leading-[26px]">{titleLink}</h3>
             <div className="text-xs leading-[18px] text-muted-foreground">
-              <MetaLine video={video} />
+              <Stats video={video} icon={false} />
             </div>
-            <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+            <div className="mt-3 flex items-center gap-2 text-xs leading-[18px] text-muted-foreground">
               <CardAvatar video={video} className="size-6 text-[11px]" />
               <ChannelName video={video} />
             </div>
@@ -244,13 +265,13 @@ export function VideoCard({ video, onPlay, progress, onRemove, removeLabel = "Re
   return (
     <article className={cn("card group relative flex min-w-0 flex-col gap-3", className)}>
       {thumbLink()}
-      <div className="flex gap-3">
-        <CardAvatar video={video} />
+      <div className="flex gap-2">
+        {hideChannel ? null : <CardAvatar video={video} />}
         <div className="min-w-0 flex-1">
           <h3 className="card-title line-clamp-2 text-base font-medium leading-[22px]">{titleLink}</h3>
-          <div className="mt-1 text-sm leading-5 text-muted-foreground">
-            <ChannelName video={video} />
-            <MetaLine video={video} />
+          <div className="flex flex-wrap items-center gap-x-2 text-sm leading-5 text-muted-foreground">
+            {hideChannel ? null : <ChannelName video={video} className="max-w-full" />}
+            <Stats video={video} />
           </div>
         </div>
         <CardMenu video={video} onRemove={onRemove} removeLabel={removeLabel} />

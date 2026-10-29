@@ -11,13 +11,13 @@ import type { CardVariant } from "./VideoCard";
 // Keep these numbers in sync with GRID_CLASS (Tailwind needs the literal class).
 export const GRID_MIN_CARD = 300;
 export const GRID_GAP = 16;
-export const GRID_CLASS = "grid grid-cols-[repeat(auto-fill,minmax(min(100%,300px),1fr))] gap-x-4 gap-y-10";
+export const GRID_CLASS = "grid grid-cols-[repeat(auto-fill,minmax(min(100%,300px),1fr))] gap-x-4 gap-y-9";
 
 function CardSkeleton({ variant }: { variant: CardVariant }) {
   if (variant === "list") {
     return (
       <div className="flex flex-col gap-4 sm:flex-row" aria-hidden="true">
-        <Skeleton className="aspect-video w-full rounded-xl sm:w-90" />
+        <Skeleton className="aspect-video w-full rounded-xl sm:max-w-[500px] sm:flex-1" />
         <div className="flex-1 space-y-2 pt-1">
           <Skeleton className="h-5 w-11/12" />
           <Skeleton className="h-4 w-1/3" />
@@ -29,7 +29,7 @@ function CardSkeleton({ variant }: { variant: CardVariant }) {
   if (variant === "compact") {
     return (
       <div className="flex gap-2" aria-hidden="true">
-        <Skeleton className="aspect-video w-[168px] shrink-0 rounded-lg" />
+        <Skeleton className="aspect-video w-[62.5%] max-w-[248px] shrink-0 rounded-lg" />
         <div className="flex-1 space-y-2">
           <Skeleton className="h-4 w-full" />
           <Skeleton className="h-3 w-2/3" />
@@ -40,7 +40,7 @@ function CardSkeleton({ variant }: { variant: CardVariant }) {
   return (
     <div className="flex flex-col gap-3" aria-hidden="true">
       <Skeleton className="aspect-video w-full rounded-xl" />
-      <div className="flex gap-3">
+      <div className="flex gap-2">
         <Skeleton className="size-9 shrink-0 rounded-full" />
         <div className="flex-1 space-y-2">
           <Skeleton className="h-4 w-11/12" />

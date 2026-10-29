@@ -14,6 +14,12 @@ export function formatViews(count: number | null | undefined): string | null {
   return `${compact} ${count === 1 ? "view" : "views"}`;
 }
 
+/** YouTube's compact count without the unit, e.g. "33", "7.8K", "1.2M". */
+export function formatCount(count: number | null | undefined): string | null {
+  if (count === null || count === undefined) return null;
+  return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(count);
+}
+
 export function formatBytes(bytes: number | null | undefined): string {
   if (!bytes || bytes < 0) return "0 B";
   const units = ["B", "KB", "MB", "GB"];

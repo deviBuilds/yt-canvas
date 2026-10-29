@@ -50,11 +50,13 @@ export function SearchBar() {
   };
 
   return (
-    <form className="relative flex min-w-0 max-w-[728px] flex-1 items-center" role="search" onSubmit={submit}>
+    <form className="group relative flex min-w-0 max-w-[640px] flex-1 items-center sm:pl-9 sm:focus-within:pl-0" role="search" onSubmit={submit}>
       <label className="sr-only" htmlFor={`${errorId}-input`}>
         Search YouTube or paste a URL
       </label>
-      <div className="flex h-10 min-w-0 flex-1 items-center rounded-l-full border border-input-border bg-input-bg pl-4 pr-1 focus-within:ml-0 focus-within:border-link focus-within:shadow-[inset_0_1px_2px_rgba(0,0,0,0.3)]">
+      <div className="flex h-10 min-w-0 flex-1 items-center rounded-l-full border border-input-border bg-input-bg pl-4 pr-1 focus-within:border-link focus-within:shadow-[inset_0_1px_2px_rgba(0,0,0,0.3)] sm:focus-within:pl-3">
+        {/* YouTube shows a search icon inside the box while it has focus. */}
+        <Search className="mr-3 hidden size-5 shrink-0 sm:group-focus-within:block" strokeWidth={1.75} aria-hidden="true" />
         <input
           ref={inputRef}
           id={`${errorId}-input`}

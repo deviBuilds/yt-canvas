@@ -73,8 +73,8 @@ function GuideEntry({ to, icon: Icon, label, onNavigate }: { to: string; icon: L
 
 function GuideSection({ title, children }: { title?: string; children: ReactNode }) {
   return (
-    <div className="border-b border-border px-3 py-3 last:border-b-0">
-      {title ? <h2 className="px-3 pb-1 pt-1.5 text-base font-medium">{title}</h2> : null}
+    <div className="border-b border-border py-3 pl-3 pr-6 last:border-b-0">
+      {title ? <h2 className="px-3 pb-1 pt-1.5 text-base font-medium leading-[22px]">{title}</h2> : null}
       {children}
     </div>
   );
@@ -171,7 +171,7 @@ export function AppShell({ banner, children }: { banner?: ReactNode; children: R
         Skip to content
       </a>
       <header className="fixed inset-x-0 top-0 z-40 flex h-14 items-center justify-between gap-2 bg-background px-2 sm:gap-4 sm:px-4">
-        <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+        <div className="flex shrink-0 items-center">
           <Button variant="ghost" size="icon" aria-label="Menu" aria-expanded={inlineGuide || drawerOpen} onClick={toggleGuide}>
             <Menu />
           </Button>

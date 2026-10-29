@@ -51,7 +51,7 @@ function ControlButton({
       aria-label={label}
       title={title}
       className={cn(
-        "flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full text-white opacity-90 transition hover:opacity-100 disabled:cursor-default disabled:opacity-40 [&_svg]:size-6",
+        "flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full text-white transition-colors hover:bg-white/10 disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent [&_svg]:size-6",
         className,
       )}
       {...rest}
@@ -60,6 +60,9 @@ function ControlButton({
     </button>
   );
 }
+
+// YouTube's 2026 player groups its controls into translucent pills.
+const PILL = "flex h-10 items-center rounded-full bg-black/30 backdrop-blur-sm";
 
 const selectClass =
   "h-8 cursor-pointer rounded-md border border-white/20 bg-[#1f1f1f] px-2 text-sm text-white outline-none focus-visible:border-white";
@@ -102,7 +105,7 @@ export function PlayerControls(props: PlayerControlsProps) {
     <div className="controls" role="group" aria-label="Player controls">
       <input
         type="range"
-        className="range seek-input"
+        className="range seek-input mb-2"
         aria-label="Seek"
         min={0}
         max={duration || 0}
@@ -114,25 +117,26 @@ export function PlayerControls(props: PlayerControlsProps) {
         onChange={(event) => props.onSeek(Number(event.currentTarget.value))}
       />
 
-      <div className="flex items-center justify-between gap-1">
-        <div className="flex min-w-0 items-center">
-          <ControlButton label="Previous video" title="Previous (Shift+P)" disabled={!props.hasPrevious} onClick={props.onPrevious}>
-            <SkipBack className="fill-current" />
-          </ControlButton>
-          <ControlButton
-            label={playing ? "Pause" : "Play"}
-            title={playing ? "Pause (K)" : "Play (K)"}
-            disabled={disabled}
-            onClick={props.onTogglePlay}
-            className="size-12 [&_svg]:size-7"
-          >
-            {playing ? <Pause className="fill-current" /> : <Play className="fill-current" />}
-          </ControlButton>
-          <ControlButton label="Next video" title="Next (Shift+N)" disabled={!props.hasNext} onClick={props.onNext}>
-            <SkipForward className="fill-current" />
-          </ControlButton>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className={PILL}>
+            <ControlButton label="Previous video" title="Previous (Shift+P)" disabled={!props.hasPrevious} onClick={props.onPrevious}>
+              <SkipBack className="fill-current" />
+            </ControlButton>
+            <ControlButton
+              label={playing ? "Pause" : "Play"}
+              title={playing ? "Pause (K)" : "Play (K)"}
+              disabled={disabled}
+              onClick={props.onTogglePlay}
+            >
+              {playing ? <Pause className="fill-current" /> : <Play className="fill-current" />}
+            </ControlButton>
+            <ControlButton label="Next video" title="Next (Shift+N)" disabled={!props.hasNext} onClick={props.onNext}>
+              <SkipForward className="fill-current" />
+            </ControlButton>
+          </div>
 
-          <div className="group/volume flex items-center">
+          <div className={cn(PILL, "sm:pr-3")}>
             <ControlButton label={media.muted ? "Unmute" : "Mute"} title={media.muted ? "Unmute (M)" : "Mute (M)"} onClick={props.onToggleMute}>
               <VolumeIcon />
             </ControlButton>
@@ -150,14 +154,14 @@ export function PlayerControls(props: PlayerControlsProps) {
             />
           </div>
 
-          <span className="ml-3 whitespace-nowrap text-[13px] tabular-nums text-white/90" aria-live="off">
+          <span className={cn(PILL, "whitespace-nowrap px-3 text-sm font-medium tabular-nums text-white")} aria-live="off">
             <span>{formatTime(media.currentTime)}</span>
-            <span className="text-white/70"> / </span>
+            <span className="text-white/70">&nbsp;/&nbsp;</span>
             <span className="text-white/70">{formatTime(duration)}</span>
           </span>
         </div>
 
-        <div className="flex shrink-0 items-center">
+        <div className={cn(PILL, "shrink-0 px-1")}>
           <ControlButton
             label={`Effect: ${effectLabel}`}
             title={`${effectLabel} effect (G)`}

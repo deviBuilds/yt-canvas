@@ -12,17 +12,19 @@ export function VideoGrid({
   items,
   onPlay,
   variant = "grid",
+  hideChannel,
   className,
 }: {
   items: VideoSummary[];
   onPlay?: (video: VideoSummary) => void;
   variant?: CardVariant;
+  hideChannel?: boolean;
   className?: string;
 }) {
   return (
     <div className={cn(variant === "grid" ? GRID_CLASS : "flex flex-col gap-4", className)}>
       {items.map((video) => (
-        <VideoCard key={`${video.source}:${video.id}`} video={video} onPlay={onPlay} variant={variant} />
+        <VideoCard key={`${video.source}:${video.id}`} video={video} onPlay={onPlay} variant={variant} hideChannel={hideChannel} />
       ))}
     </div>
   );
@@ -52,19 +54,21 @@ export function PagedResults({
   emptyBody,
   onPlay,
   variant = "grid",
+  hideChannel,
 }: {
   state: PagedState;
   emptyTitle: string;
   emptyBody?: ReactNode;
   onPlay?: (video: VideoSummary) => void;
   variant?: CardVariant;
+  hideChannel?: boolean;
 }) {
   if (state.loading) return <LoadingGrid variant={variant} count={variant === "grid" ? 8 : 5} />;
   if (state.error && state.items.length === 0) return <ErrorState error={state.error} onRetry={state.retry} />;
   if (state.page && state.items.length === 0) return <EmptyState title={emptyTitle}>{emptyBody}</EmptyState>;
   return (
     <>
-      <VideoGrid items={state.items} onPlay={onPlay} variant={variant} />
+      <VideoGrid items={state.items} onPlay={onPlay} variant={variant} hideChannel={hideChannel} />
       {state.error ? <ErrorState error={state.error} onRetry={state.loadMore} /> : null}
       {state.hasMore && !state.error ? (
         <div className="flex flex-col items-center gap-3 py-8">

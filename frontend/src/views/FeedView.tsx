@@ -25,7 +25,7 @@ export function FeedView({ id }: { id: string }) {
   return (
     <div className="px-4 pb-12 sm:px-6">
       <ChipBar label="Topics" chips={homeChips(id, searches.slice(0, 4).map((s) => s.query), feeds)} />
-      <header className="flex items-center gap-4 border-b border-border pb-6 pt-4 sm:gap-6">
+      <header className="flex items-center gap-4 pb-2 pt-4 sm:gap-6">
         <span className="flex size-16 shrink-0 items-center justify-center rounded-full bg-secondary sm:size-20" aria-hidden="true">
           <Icon className="size-8 sm:size-10" strokeWidth={1.5} />
         </span>

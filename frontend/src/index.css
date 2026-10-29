@@ -194,14 +194,22 @@
     pointer-events: none;
   }
 
-  /* Controls float over the bottom of the picture, YouTube-style. */
+  /* Controls float over the bottom of the picture, 12 px in from the edges, as on YouTube. */
   .controls {
     position: absolute;
-    inset: auto 0 0 0;
+    inset: auto 12px 8px 12px;
     z-index: 4;
-    padding: 0 12px 4px;
-    background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.75));
     transition: opacity 200ms ease;
+  }
+
+  .controls::before {
+    content: "";
+    position: absolute;
+    inset: auto -12px -8px -12px;
+    height: 140px;
+    z-index: -1;
+    pointer-events: none;
+    background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.55));
   }
 
   .player[data-idle="true"] .controls:not(:has(:focus-visible)):not(:has([data-open="true"])) {
