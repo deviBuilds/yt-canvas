@@ -33,6 +33,9 @@ import { useMediaState } from "./useMediaState";
  */
 export type DecoderStrategy = "layered" | "covered" | "offscreen" | "hidden";
 
+/** The player's canvas, with what it is drawn from attached for tests and debugging (never in the DOM). */
+export type PlayerCanvas = HTMLCanvasElement & { ytcMedia?: PlaybackMedia; ytcRenderer?: CanvasRenderer };
+
 const OVERLAY_CARD = "w-full max-w-md rounded-xl bg-[#212121]/95 p-5 text-left text-white shadow-2xl";
 const OVERLAY_BUTTON =
   "mt-4 inline-flex h-9 cursor-pointer items-center rounded-full bg-white px-4 text-sm font-medium text-black hover:bg-white/85";
@@ -132,8 +135,9 @@ export function CanvasPlayer(props: CanvasPlayerProps) {
       video.disablePictureInPicture = true;
       (video as HTMLVideoElement & { disableRemotePlayback?: boolean }).disableRemotePlayback = true;
     }
-    // For tests and debugging: what the canvas is drawn from.
-    (canvas as HTMLCanvasElement & { ytcMedia?: PlaybackMedia }).ytcMedia = video;
+    // For tests and debugging: what the canvas is drawn from, and how (frames drawn, render mode).
+    const debug = canvas as PlayerCanvas;
+    debug.ytcMedia = video;
     let lastSync = 0;
     const renderer = new CanvasRenderer(video, canvas, {
       effect: prefsRef.current.effect,
@@ -155,10 +159,13 @@ export function CanvasPlayer(props: CanvasPlayerProps) {
       },
     });
     rendererRef.current = renderer;
+    debug.ytcRenderer = renderer;
     if (boxRef.current.width > 0) renderer.setDisplaySize(boxRef.current, window.devicePixelRatio || 1);
     return () => {
       renderer.dispose();
       rendererRef.current = null;
+      delete debug.ytcRenderer;
+      delete debug.ytcMedia;
     };
   }, [video, forceFallback, syncMedia]);
 

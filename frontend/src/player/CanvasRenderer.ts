@@ -72,7 +72,6 @@ export class CanvasRenderer {
         ? "video-frame-callback"
         : "animation-frame";
     this.effect = getEffect(options.effect ?? "none");
-    canvas.dataset.renderMode = this.mode;
 
     this.listeners = [
       ["loadeddata", () => this.drawNow()],
@@ -124,7 +123,6 @@ export class CanvasRenderer {
     this.cancelPending();
     this.framesDrawn = 0;
     this.lastMediaTime = -1;
-    this.canvas.dataset.frames = "0";
     this.clear();
     this.schedule();
   }
@@ -232,7 +230,6 @@ export class CanvasRenderer {
 
     this.framesDrawn++;
     this.lastMediaTime = mediaTime;
-    this.canvas.dataset.frames = String(this.framesDrawn);
     this.options.onFrame?.(mediaTime);
     return true;
   }

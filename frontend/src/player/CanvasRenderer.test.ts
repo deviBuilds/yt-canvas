@@ -44,7 +44,8 @@ describe("CanvasRenderer with requestVideoFrameCallback", () => {
     expect(presentFrame(video, 0.533)).toBe(1);
     expect(videoDraws(canvas)).toBe(afterLoad + 2);
     expect(renderer.stats.lastMediaTime).toBeCloseTo(0.533);
-    expect(canvas.dataset.frames).toBe(String(renderer.stats.framesDrawn));
+    // The count lives in stats, not in the DOM: nothing is written to the canvas element per frame.
+    expect(canvas.hasAttribute("data-frames")).toBe(false);
     expect(pendingFrameCallbacks(video)).toBe(1);
   });
 
@@ -100,13 +101,12 @@ describe("CanvasRenderer with requestVideoFrameCallback", () => {
   });
 
   it("resets on a source change and re-arms a single callback", () => {
-    const { video, canvas, renderer } = setup();
+    const { video, renderer } = setup();
     loadMetadata(video);
     presentFrame(video, 1);
     expect(renderer.stats.framesDrawn).toBeGreaterThan(0);
     video.load(); // fires emptied
     expect(renderer.stats.framesDrawn).toBe(0);
-    expect(canvas.dataset.frames).toBe("0");
     expect(pendingFrameCallbacks(video)).toBe(1);
   });
 

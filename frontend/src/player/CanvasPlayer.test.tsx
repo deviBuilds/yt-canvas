@@ -12,7 +12,7 @@ import {
   pendingFrameCallbacks,
   presentFrame,
 } from "../test/fakeMedia";
-import { CanvasPlayer, type CanvasPlayerProps } from "./CanvasPlayer";
+import { CanvasPlayer, type CanvasPlayerProps, type PlayerCanvas } from "./CanvasPlayer";
 
 function renderPlayer(props: Partial<CanvasPlayerProps> = {}) {
   const result = render(<CanvasPlayer src={null} {...props} />);
@@ -20,6 +20,8 @@ function renderPlayer(props: Partial<CanvasPlayerProps> = {}) {
   const canvas = screen.getByTestId("video-canvas") as HTMLCanvasElement;
   return { ...result, video, canvas, rerenderPlayer: (next: Partial<CanvasPlayerProps>) => result.rerender(<CanvasPlayer src={null} {...props} {...next} />) };
 }
+
+const stats = (canvas: HTMLCanvasElement) => (canvas as PlayerCanvas).ytcRenderer!.stats;
 
 /** Let promise callbacks (play() resolution) settle inside act(). */
 const flush = () => act(async () => undefined);
@@ -44,7 +46,8 @@ describe("CanvasPlayer", () => {
     expect(video).toHaveClass("decoder", "decoder-layered");
     expect(video.hasAttribute("controls")).toBe(false);
     expect(video.playsInline).toBe(true);
-    expect(canvas.dataset.renderMode).toBe("video-frame-callback");
+    expect(stats(canvas).mode).toBe("video-frame-callback");
+    expect(canvas.hasAttribute("data-render-mode")).toBe(false);
     // Nothing to play yet: transport controls are disabled.
     expect(screen.getByRole("button", { name: "Play" })).toBeDisabled();
     expect(screen.getByRole("slider", { name: "Seek" })).toBeDisabled();
@@ -84,12 +87,12 @@ describe("CanvasPlayer", () => {
       presentFrame(video, 1);
       presentFrame(video, 2);
     });
-    expect(Number(canvas.dataset.frames)).toBeGreaterThan(1);
+    expect(stats(canvas).framesDrawn).toBeGreaterThan(1);
 
     rerenderPlayer({ src: "/api/media/b", onTimeUpdate, startTime: null });
     expect(video.getAttribute("src")).toBe("/api/media/b");
     expect(mediaSpies.load).toHaveBeenCalledTimes(2);
-    expect(canvas.dataset.frames).toBe("0");
+    expect(stats(canvas).framesDrawn).toBe(0);
     expect(pendingFrameCallbacks(video)).toBe(1);
     expect(screen.getByRole("slider", { name: "Seek" })).toHaveValue("0");
 

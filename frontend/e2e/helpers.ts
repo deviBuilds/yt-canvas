@@ -35,7 +35,9 @@ export async function demoLayout(page: Page, id: string): Promise<DemoLayout> {
 /** Read pixels back from the player's canvas (getImageData) and decode the demo layout. */
 export async function sampleCanvas(page: Page, layout: DemoLayout): Promise<CanvasSample> {
   return page.evaluate((layout) => {
-    const canvas = document.querySelector<HTMLCanvasElement & { ytcMedia?: HTMLMediaElement }>('[data-testid="video-canvas"]');
+    const canvas = document.querySelector<
+      HTMLCanvasElement & { ytcMedia?: HTMLMediaElement; ytcRenderer?: { stats: { framesDrawn: number; mode: string } } }
+    >('[data-testid="video-canvas"]');
     const video = canvas?.ytcMedia;
     if (!canvas || !video) throw new Error("player not found");
     const ctx = canvas.getContext("2d");
@@ -76,8 +78,8 @@ export async function sampleCanvas(page: Page, layout: DemoLayout): Promise<Canv
       time: video.currentTime,
       duration: video.duration,
       paused: video.paused,
-      frames: Number(canvas.dataset.frames ?? 0),
-      mode: canvas.dataset.renderMode ?? "",
+      frames: canvas.ytcRenderer?.stats.framesDrawn ?? 0,
+      mode: canvas.ytcRenderer?.stats.mode ?? "",
       width: canvas.width,
       height: canvas.height,
       bar: white / canvas.width,
@@ -89,7 +91,11 @@ export async function sampleCanvas(page: Page, layout: DemoLayout): Promise<Canv
 }
 
 export async function framesDrawn(page: Page): Promise<number> {
-  return page.evaluate(() => Number(document.querySelector<HTMLCanvasElement>('[data-testid="video-canvas"]')?.dataset.frames ?? 0));
+  return page.evaluate(
+    () =>
+      document.querySelector<HTMLCanvasElement & { ytcRenderer?: { stats: { framesDrawn: number } } }>('[data-testid="video-canvas"]')
+        ?.ytcRenderer?.stats.framesDrawn ?? 0,
+  );
 }
 
 /** The playing source: the engine's source id, or the fallback element's src attribute. */
