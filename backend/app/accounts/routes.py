@@ -3,6 +3,7 @@
 - ``GET /api/auth/config``: whether accounts are on, and Clerk's publishable key (open to all).
 - ``GET /api/auth/me``: who is signed in.
 - ``PUT``/``DELETE /api/me/cookies``: upload or remove your YouTube cookies.txt.
+- ``POST /api/me/cookies/renew``: renew them with YouTube now (they're also renewed in the background).
 - ``/api/library``: your favorites, history (positions, for continue watching) and searches.
 - ``/api/admin/allowlist``: who may sign in (admins only).
 
@@ -78,6 +79,12 @@ async def upload_cookies(request: Request) -> dict:
 async def delete_cookies(request: Request) -> dict:
     await _youtube(request).remove(_me(request))
     return {"ok": True}
+
+
+@router.post("/me/cookies/renew")
+async def renew_cookies(request: Request) -> dict:
+    """Refresh your cookies with a youtube.com visit now, instead of at the next background renewal."""
+    return {"ok": True, **await _youtube(request).renew(_me(request))}
 
 
 # -- library -----------------------------------------------------------------------------------

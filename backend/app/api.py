@@ -133,7 +133,8 @@ async def me(request: Request) -> Me:
         return me
     meta = request.app.state.accounts.latest(user).secret_meta("youtube_cookies") or {}
     return me.model_copy(update={"uploads": True, "uploaded_at": meta.get("uploaded_at"),
-                                 "cookie_count": meta.get("count")})
+                                 "cookie_count": meta.get("count"), "renewed_at": meta.get("renewed_at"),
+                                 "renew_error": meta.get("renew_error")})
 
 
 @router.get("/me/feed/{feed_id}", response_model=Page)

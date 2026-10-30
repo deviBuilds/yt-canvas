@@ -265,7 +265,7 @@ def test_youtube_cookies_are_per_person_and_encrypted(client, two, convex, accou
     assert me["uploads"] is True and me["cookie_count"] == 2 and me["configured"] is True
     assert client.get("/api/me", headers=b).json() | {"uploaded_at": None} == {
         "configured": False, "signed_in": False, "source": None, "avatar_url": None, "chips": [], "detail": None,
-        "uploads": True, "uploaded_at": None, "cookie_count": None}
+        "uploads": True, "uploaded_at": None, "cookie_count": None, "renewed_at": None, "renew_error": None}
 
     # yt-dlp gets A's cookies only inside A's requests.
     accounts = client.app.state.accounts

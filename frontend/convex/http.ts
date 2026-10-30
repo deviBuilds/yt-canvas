@@ -16,6 +16,7 @@ const OPS: Record<string, Op> = {
   "users.resolve": ["mutation", internal.backend.resolveUser],
   "users.setApps": ["mutation", internal.backend.setApps],
   "secrets.get": ["query", internal.backend.getSecret],
+  "secrets.ofKind": ["query", internal.backend.secretsOfKind],
   "secrets.put": ["mutation", internal.backend.putSecret],
   "secrets.delete": ["mutation", internal.backend.deleteSecret],
   "devices.create": ["mutation", internal.backend.createDevice],

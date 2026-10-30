@@ -65,6 +65,10 @@ class FakeConvex:
         s = self.secrets.get((userId, kind))
         return s and {"ciphertext": s["ciphertext"], "meta": s["meta"], "updatedAt": s["updatedAt"]}
 
+    def op_secrets_ofKind(self, kind: str) -> list[dict[str, Any]]:  # noqa: N802
+        return [{"userId": uid, "meta": s["meta"], "updatedAt": s["updatedAt"]}
+                for (uid, k), s in self.secrets.items() if k == kind]
+
     def op_secrets_put(self, userId: str, kind: str, ciphertext: str, meta: Any) -> int:  # noqa: N803
         updated = next(self._clock)
         self.secrets[(userId, kind)] = {"ciphertext": ciphertext, "meta": meta, "updatedAt": updated}

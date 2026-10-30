@@ -97,3 +97,7 @@ class Me(BaseModel):
     uploads: bool = False
     uploaded_at: float | None = None
     cookie_count: int | None = None
+    # Renewing them, in the background or with POST /api/me/cookies/renew: when it last worked,
+    # and "session_ended" once YouTube treats them as signed out (fresh ones are needed).
+    renewed_at: float | None = None
+    renew_error: str | None = None

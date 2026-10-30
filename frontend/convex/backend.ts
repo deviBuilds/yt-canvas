@@ -144,6 +144,18 @@ export const getSecret = internalQuery({
   },
 });
 
+// Everyone's secrets of one kind, without their ciphertext: the server's background renewal
+// reads the meta to see whose cookies are due. A table scan, fine for a personal allowlist.
+export const secretsOfKind = internalQuery({
+  args: { kind: v.string() },
+  handler: async (ctx, { kind }) => {
+    const secrets = await ctx.db.query("secrets").collect();
+    return secrets
+      .filter((s) => s.kind === kind)
+      .map((s) => ({ userId: s.userId, meta: s.meta, updatedAt: s.updatedAt }));
+  },
+});
+
 export const putSecret = internalMutation({
   args: { userId: v.id("users"), kind: v.string(), ciphertext: v.string(), meta: v.any() },
   handler: async (ctx, { userId, kind, ciphertext, meta }) => {

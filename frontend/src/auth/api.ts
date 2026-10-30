@@ -37,6 +37,8 @@ export const authApi = {
       headers: { "Content-Type": "text/plain" },
     }),
   deleteCookies: () => request<{ ok: boolean }>("/api/me/cookies", { method: "DELETE" }),
+  renewCookies: () =>
+    request<{ ok: boolean; renewed_at: number; refreshed: string[] }>("/api/me/cookies/renew", { method: "POST" }),
   allowlist: (signal?: AbortSignal) => request<{ entries: AllowlistEntry[] }>("/api/admin/allowlist", { signal }),
   allow: (emails: string[]) =>
     request<{ added: number }>("/api/admin/allowlist", { method: "POST", body: JSON.stringify({ emails }) }),

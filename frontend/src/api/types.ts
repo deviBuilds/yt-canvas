@@ -104,6 +104,10 @@ export interface Me {
   uploads?: boolean;
   uploaded_at?: number | null;
   cookie_count?: number | null;
+  /** When they were last renewed (a youtube.com visit, every few hours or on "Renew now"). */
+  renewed_at?: number | null;
+  /** "session_ended": YouTube treats them as signed out, so renewing stopped until new ones come. */
+  renew_error?: string | null;
 }
 
 export interface ParsedInput {

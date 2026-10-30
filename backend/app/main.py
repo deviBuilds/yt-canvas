@@ -170,10 +170,13 @@ def create_app(
                 await accounts.ensure_admins()
             except AppError as exc:
                 log.warning("couldn't add the admins to the allowlist yet: %s", exc.message)
+        renewal = asyncio.create_task(user_youtube.run()) if user_youtube is not None else None
         try:
             yield
         finally:
             cleanup.cancel()
+            if renewal is not None:
+                renewal.cancel()
             await app.state.jobs.shutdown()
             await app.state.streams.shutdown()
 

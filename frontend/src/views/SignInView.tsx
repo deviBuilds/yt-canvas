@@ -1,4 +1,4 @@
-import { CircleCheck, CircleUserRound, ClipboardPaste, RefreshCw, Trash2, TriangleAlert, Upload } from "lucide-react";
+import { CircleCheck, CircleUserRound, ClipboardPaste, RefreshCw, RotateCw, Trash2, TriangleAlert, Upload } from "lucide-react";
 import { useRef, useState, type ChangeEvent, type ReactNode } from "react";
 
 import { useMe } from "@/account/useMe";
@@ -6,6 +6,7 @@ import { useAccount } from "@/auth/AccountContext";
 import { authApi, type CookieFormat } from "@/auth/api";
 import { ChannelAvatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { ApiError } from "@/api/http";
 import type { Me } from "@/api/types";
 
 function Code({ children }: { children: ReactNode }) {
@@ -107,6 +108,19 @@ export function SignInView() {
 
 const day = (seconds: number) => new Date(seconds * 1000).toLocaleDateString();
 
+/** "just now", "12 minutes ago", "3 hours ago", or the day. */
+export function since(seconds: number, now = Date.now() / 1000): string {
+  const minutes = Math.floor((now - seconds) / 60);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  return `on ${day(seconds)}`;
+}
+
+const failure = (err: unknown) =>
+  err instanceof ApiError && err.info.hint ? `${err.message} ${err.info.hint}` : err instanceof Error ? err.message : String(err);
+
 const FORMAT_NAMES: Record<CookieFormat, string> = { netscape: "a cookies.txt", json: "a JSON export", header: "a Cookie header" };
 
 /**
@@ -148,6 +162,29 @@ function YourYouTube({ me, known, retry }: { me: Me; known: boolean; retry: () =
     if (chosen) save(chosen.text());
   };
 
+  const renew = () => {
+    setBusy(true);
+    setMessage(null);
+    authApi
+      .renewCookies()
+      .then(
+        (result) => {
+          setMessage({
+            ok: true,
+            text: result.refreshed.length
+              ? `Renewed: YouTube still signs you in and refreshed ${result.refreshed.length} of your cookies.`
+              : "Renewed: YouTube still signs you in; nothing needed refreshing.",
+          });
+          retry();
+        },
+        (err: unknown) => {
+          setMessage({ ok: false, text: failure(err) });
+          retry();
+        },
+      )
+      .finally(() => setBusy(false));
+  };
+
   const remove = () => {
     setBusy(true);
     authApi
@@ -174,6 +211,10 @@ function YourYouTube({ me, known, retry }: { me: Me; known: boolean; retry: () =
         <p className="text-sm text-muted-foreground">
           With the {me.cookie_count ?? ""} cookies you uploaded{me.uploaded_at ? ` on ${day(me.uploaded_at)}` : ""}.
         </p>
+        <p className="text-sm text-muted-foreground">
+          {me.renewed_at ? `Last renewed ${since(me.renewed_at)}. ` : ""}They're renewed every few hours, so they stay
+          fresh while you're not watching.
+        </p>
       </div>
     </div>
   ) : uploaded ? (
@@ -181,7 +222,9 @@ function YourYouTube({ me, known, retry }: { me: Me; known: boolean; retry: () =
       <TriangleAlert className="mt-0.5 size-5 shrink-0 text-danger" aria-hidden="true" />
       <div>
         <p className="font-medium">Your cookies aren't working</p>
-        <p className="text-sm text-muted-foreground">{me.detail ?? "YouTube didn't accept them."} Upload fresh ones.</p>
+        <p className="text-sm text-muted-foreground">
+          {me.detail ?? "YouTube didn't accept them."} Upload fresh ones, exported from a private window (see below).
+        </p>
       </div>
     </div>
   ) : (
@@ -224,6 +267,11 @@ function YourYouTube({ me, known, retry }: { me: Me; known: boolean; retry: () =
           <Button variant="secondary" disabled={busy} onClick={() => setPasting((open) => !open)} aria-expanded={pasting}>
             <ClipboardPaste /> Paste instead
           </Button>
+          {uploaded && (
+            <Button variant="secondary" disabled={busy} onClick={renew}>
+              <RotateCw /> Renew now
+            </Button>
+          )}
           {uploaded && (
             <Button variant="secondary" disabled={busy} onClick={remove}>
               <Trash2 /> Remove
@@ -273,7 +321,10 @@ function YourYouTube({ me, known, retry }: { me: Me; known: boolean; retry: () =
 
       <h2 className="mt-8 text-xl font-bold">Getting your cookies</h2>
       <ol className="mt-3 list-decimal space-y-3 pl-5">
-        <li>Sign in to YouTube in a browser on your computer (a secondary Google account is safer, see below).</li>
+        <li>
+          Open a private (incognito) window on your computer and sign in to YouTube there (a secondary Google account is
+          safer, see below).
+        </li>
         <li>
           With youtube.com open, export its cookies in any of these, then upload the file or paste what you copied:
           <ul className="mt-2 list-disc space-y-1 pl-5">
@@ -291,6 +342,11 @@ function YourYouTube({ me, known, retry }: { me: Me; known: boolean; retry: () =
             </li>
           </ul>
         </li>
+        <li>
+          Close the private window without signing out, and give this export to yt-canvas only. When two copies of one
+          session drift apart (another app using the same export, or the browser you exported from), Google ends the
+          session for both.
+        </li>
         <li>It's converted to a cookies.txt on the server. Then you can delete the export from your computer.</li>
       </ol>
 
@@ -301,8 +357,9 @@ function YourYouTube({ me, known, retry }: { me: Me; known: boolean; retry: () =
           stored in your account, and they're never logged, shown again or sent to any page.
         </li>
         <li>
-          When YouTube refreshes them, the refreshed ones replace the stored copy, so the session keeps working. If YouTube
-          signs them out, upload a fresh file.
+          yt-canvas keeps them fresh: whatever YouTube refreshes while you watch replaces the stored copy, and every few
+          hours it visits youtube.com with them for the same reason (Renew now does it at once). If YouTube signs them
+          out, upload a fresh export.
         </li>
         <li>
           Those cookies are a Google session. Automated use of a real account can get it signed out or flagged by Google; a

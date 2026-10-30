@@ -209,4 +209,55 @@ describe("Your YouTube", () => {
     expect(calls.find((c) => c.url === "/api/me/cookies")).toMatchObject({ method: "PUT", body: exported });
     expect(screen.queryByLabelText(/Paste a cookies.txt/)).toBeNull();
   });
+
+  it("renews uploaded cookies now and says when they last were", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    const { SignInView } = await import("@/views/SignInView");
+    const renewedAt = Date.now() / 1000 - 3 * 3600;
+    vi.mocked(fetch).mockImplementation(async (url, init = {}) => {
+      calls.push({ method: init.method ?? "GET", url: String(url), body: init.body, headers: {} });
+      if (url === "/api/me/cookies/renew") return json({ ok: true, renewed_at: renewedAt, refreshed: ["SIDCC", "YSC"] });
+      return json({ configured: true, signed_in: true, source: "cookies file", avatar_url: null, chips: [], detail: null,
+                    uploads: true, uploaded_at: 1, cookie_count: 21, renewed_at: renewedAt, renew_error: null });
+    });
+    render(
+      <AccountContext.Provider value={signedIn(bea)}>
+        <SignInView />
+      </AccountContext.Provider>,
+    );
+    expect(await screen.findByText(/Last renewed 3 hours ago/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Renew now/ }));
+    expect(await screen.findByText(/YouTube still signs you in and refreshed 2 of your cookies/)).toBeInTheDocument();
+    expect(calls.find((c) => c.url === "/api/me/cookies/renew")).toMatchObject({ method: "POST" });
+  });
+
+  it("shows why renewing failed, with the hint", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    const { SignInView } = await import("@/views/SignInView");
+    vi.mocked(fetch).mockImplementation(async (url) => {
+      if (url === "/api/me/cookies/renew") {
+        return json({ error: { code: "signin_failed", message: "YouTube treats these cookies as signed out.",
+                               hint: "Upload fresh ones, exported from a private window.", retryable: false } }, 409);
+      }
+      return json({ configured: true, signed_in: true, source: "cookies file", avatar_url: null, chips: [], detail: null,
+                    uploads: true, uploaded_at: 1, cookie_count: 21 });
+    });
+    render(
+      <AccountContext.Provider value={signedIn(bea)}>
+        <SignInView />
+      </AccountContext.Provider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /Renew now/ }));
+    expect(await screen.findByText(/signed out\. Upload fresh ones, exported from a private window\./)).toBeInTheDocument();
+  });
+});
+
+describe("since", () => {
+  it("says how long ago, briefly", async () => {
+    const { since } = await import("@/views/SignInView");
+    const now = 1_800_000_000;
+    expect([since(now - 20, now), since(now - 60, now), since(now - 12 * 60, now), since(now - 3600, now),
+            since(now - 5 * 3600, now)]).toEqual(["just now", "1 minute ago", "12 minutes ago", "1 hour ago", "5 hours ago"]);
+    expect(since(now - 3 * 86400, now)).toMatch(/^on /);
+  });
 });
