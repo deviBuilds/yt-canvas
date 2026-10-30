@@ -17,6 +17,9 @@ export interface AccountUser {
   device: string | null;
 }
 
+/** What an upload was read as; it's always stored as a Netscape cookies.txt. */
+export type CookieFormat = "netscape" | "json" | "header";
+
 export interface AllowlistEntry {
   email: string;
   addedBy: string | null;
@@ -28,7 +31,7 @@ export const authApi = {
   config: (signal?: AbortSignal) => request<AuthConfig>("/api/auth/config", { signal }),
   me: (signal?: AbortSignal) => request<AccountUser>("/api/auth/me", { signal }),
   uploadCookies: (text: string) =>
-    request<{ ok: boolean; count: number; uploaded_at: number }>("/api/me/cookies", {
+    request<{ ok: boolean; count: number; uploaded_at: number; format: CookieFormat }>("/api/me/cookies", {
       method: "PUT",
       body: text,
       headers: { "Content-Type": "text/plain" },

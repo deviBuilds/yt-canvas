@@ -64,14 +64,14 @@ async def auth_me(request: Request) -> dict:
 
 @router.put("/me/cookies")
 async def upload_cookies(request: Request) -> dict:
-    """The body is a Netscape cookies.txt; only its youtube.com lines are kept."""
+    """The body is a cookies.txt, a JSON cookie export or a Cookie header; only youtube.com cookies are kept."""
     body = bytearray()
     async for chunk in request.stream():
         body += chunk
         if len(body) > 2 * 1024 * 1024:
             raise AppError("invalid_input", "That file is too large for a cookies.txt.", status=413)
     meta = await _youtube(request).upload(_me(request), bytes(body))
-    return {"ok": True, "count": meta["count"], "uploaded_at": meta["uploaded_at"]}
+    return {"ok": True, "count": meta["count"], "uploaded_at": meta["uploaded_at"], "format": meta["format"]}
 
 
 @router.delete("/me/cookies")

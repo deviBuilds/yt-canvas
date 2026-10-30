@@ -1,7 +1,7 @@
 """Each person's YouTube cookies (uploaded as a cookies.txt) and their YouTube session.
 
-The upload keeps only the file's well-formed youtube.com lines, which are encrypted into
-Convex. For yt-dlp, the cookies are written to ``<config dir>/users/<tag>/cookies.txt``
+The upload can be a Netscape cookies.txt, a JSON export or a Cookie header; it is converted to
+a cookies.txt holding only its youtube.com cookies, which is encrypted into Convex. For yt-dlp, the cookies are written to ``<config dir>/users/<tag>/cookies.txt``
 (mode 0600) whenever the stored copy is newer; yt-dlp rewrites that file with refreshed
 cookies, which are re-encrypted and stored again (at most every few minutes), so the session
 stays alive across restarts and on other servers. Cookie values are never logged.
@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import Settings
-from ..cookies import CookieLoader, NotNetscapeFormat, netscape_text, youtube_lines
+from ..cookies import CookieLoader, UnknownCookieFormat, netscape_text, to_netscape, youtube_lines
 from ..discovery.account import AccountService
 from ..errors import AppError
 from ..session import YouTubeSession
@@ -123,15 +123,16 @@ class UserYouTube:
         if len(raw) > MAX_UPLOAD_BYTES:
             raise AppError("invalid_input", "That file is too large for a cookies.txt.", status=413)
         try:
-            lines = youtube_lines(raw.decode("utf-8", errors="replace"))
-        except NotNetscapeFormat:
-            raise AppError("invalid_input", "That's a JSON export, not a Netscape cookies.txt.",
-                           hint="Export the cookies again in Netscape (cookies.txt) format.") from None
+            lines, source = to_netscape(raw.decode("utf-8", errors="replace"))
+        except UnknownCookieFormat:
+            raise AppError("invalid_input", "That isn't a cookie export yt-canvas can read.",
+                           hint="Use a cookies.txt (Netscape format), a JSON export from a cookie extension, "
+                                "or the Cookie header of a youtube.com request.") from None
         if not lines:
-            raise AppError("invalid_input", "The file has no youtube.com cookies.",
-                           hint="Export cookies.txt from a browser that's signed in to YouTube, on youtube.com.")
+            raise AppError("invalid_input", "There are no youtube.com cookies in it.",
+                           hint="Export the cookies while signed in to YouTube, with youtube.com open.")
         text = netscape_text(lines)
-        meta = {"count": len(lines), "uploaded_at": time.time()}
+        meta = {"count": len(lines), "uploaded_at": time.time(), "format": source}
         updated_at = await self.accounts.put_secret(user.id, KIND, text.encode(), meta)
         path = self._path(user.id)
         mtime = await asyncio.to_thread(self._write, path, text)

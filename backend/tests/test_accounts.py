@@ -285,6 +285,18 @@ def test_youtube_cookies_are_per_person_and_encrypted(client, two, convex, accou
     assert "--cookies" not in base_args(account_settings)
     assert session_tag() is None
 
+    # A JSON export (Cookie-Editor, EditThisCookie) works too, converted to a cookies.txt.
+    export = [{"domain": ".youtube.com", "name": "SID", "value": "json-sid-secret", "path": "/", "secure": True,
+               "httpOnly": True, "hostOnly": False, "session": False, "expirationDate": 1999999999.5},
+              {"domain": ".google.com", "name": "NID", "value": "google-only-secret"}]
+    converted = client.put("/api/me/cookies", content=json.dumps(export).encode(), headers=a).json()
+    assert (converted["count"], converted["format"]) == (1, "json")
+    session = client.portal.call(client.app.state.user_youtube.session,
+                                 client.portal.call(accounts.from_session, token("user_admin"), "testserver"))
+    written = session.settings.cookies_file.read_text()
+    assert written.startswith("# Netscape HTTP Cookie File") and "json-sid-secret" in written and "google" not in written
+    assert client.put("/api/me/cookies", content=b"just some words", headers=a).status_code == 400
+
     assert client.delete("/api/me/cookies", headers=a).json() == {"ok": True}
     assert not path.exists()
     assert client.get("/api/me", headers=a).json()["configured"] is False

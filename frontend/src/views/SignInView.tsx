@@ -1,9 +1,9 @@
-import { CircleCheck, CircleUserRound, RefreshCw, Trash2, TriangleAlert, Upload } from "lucide-react";
+import { CircleCheck, CircleUserRound, ClipboardPaste, RefreshCw, Trash2, TriangleAlert, Upload } from "lucide-react";
 import { useRef, useState, type ChangeEvent, type ReactNode } from "react";
 
 import { useMe } from "@/account/useMe";
 import { useAccount } from "@/auth/AccountContext";
-import { authApi } from "@/auth/api";
+import { authApi, type CookieFormat } from "@/auth/api";
 import { ChannelAvatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import type { Me } from "@/api/types";
@@ -107,30 +107,45 @@ export function SignInView() {
 
 const day = (seconds: number) => new Date(seconds * 1000).toLocaleDateString();
 
-/** Accounts on: upload, replace or remove your own cookies.txt; they follow your account. */
+const FORMAT_NAMES: Record<CookieFormat, string> = { netscape: "a cookies.txt", json: "a JSON export", header: "a Cookie header" };
+
+/**
+ * Accounts on: upload or paste your YouTube cookies, replace or remove them; they follow your account.
+ * A cookies.txt, a JSON export or a Cookie header all work: the server converts them to a cookies.txt.
+ */
 function YourYouTube({ me, known, retry }: { me: Me; known: boolean; retry: () => void }) {
   const file = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const [pasting, setPasting] = useState(false);
+  const [pasted, setPasted] = useState("");
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const uploaded = Boolean(me.uploaded_at);
 
-  const upload = (event: ChangeEvent<HTMLInputElement>) => {
-    const chosen = event.currentTarget.files?.[0];
-    event.currentTarget.value = "";
-    if (!chosen) return;
+  const save = (text: Promise<string>) => {
     setBusy(true);
     setMessage(null);
-    chosen
-      .text()
-      .then((text) => authApi.uploadCookies(text))
+    text
+      .then((body) => authApi.uploadCookies(body))
       .then(
         (result) => {
-          setMessage({ ok: true, text: `Saved ${result.count} youtube.com cookies to your account. Checking them with YouTube…` });
+          setMessage({
+            ok: true,
+            text: `Saved ${result.count} youtube.com cookies from ${FORMAT_NAMES[result.format]} to your account. Checking them with YouTube…`,
+          });
+          // Don't keep cookie values around in the page.
+          setPasted("");
+          setPasting(false);
           retry();
         },
         (err: unknown) => setMessage({ ok: false, text: err instanceof Error ? err.message : String(err) }),
       )
       .finally(() => setBusy(false));
+  };
+
+  const upload = (event: ChangeEvent<HTMLInputElement>) => {
+    const chosen = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (chosen) save(chosen.text());
   };
 
   const remove = () => {
@@ -166,7 +181,7 @@ function YourYouTube({ me, known, retry }: { me: Me; known: boolean; retry: () =
       <TriangleAlert className="mt-0.5 size-5 shrink-0 text-danger" aria-hidden="true" />
       <div>
         <p className="font-medium">Your cookies aren't working</p>
-        <p className="text-sm text-muted-foreground">{me.detail ?? "YouTube didn't accept them."} Upload a fresh cookies.txt.</p>
+        <p className="text-sm text-muted-foreground">{me.detail ?? "YouTube didn't accept them."} Upload fresh ones.</p>
       </div>
     </div>
   ) : (
@@ -195,9 +210,19 @@ function YourYouTube({ me, known, retry }: { me: Me; known: boolean; retry: () =
           </Button>
         </div>
         <div className="mt-4 flex flex-wrap gap-3">
-          <input ref={file} type="file" accept=".txt,text/plain" className="sr-only" onChange={upload} aria-label="cookies.txt file" />
+          <input
+            ref={file}
+            type="file"
+            accept=".txt,.json,text/plain,application/json"
+            className="sr-only"
+            onChange={upload}
+            aria-label="Cookies file"
+          />
           <Button variant="primary" disabled={busy} onClick={() => file.current?.click()}>
-            <Upload /> {uploaded ? "Replace cookies.txt" : "Upload cookies.txt"}
+            <Upload /> {uploaded ? "Replace with a file" : "Upload a file"}
+          </Button>
+          <Button variant="secondary" disabled={busy} onClick={() => setPasting((open) => !open)} aria-expanded={pasting}>
+            <ClipboardPaste /> Paste instead
           </Button>
           {uploaded && (
             <Button variant="secondary" disabled={busy} onClick={remove}>
@@ -205,25 +230,74 @@ function YourYouTube({ me, known, retry }: { me: Me; known: boolean; retry: () =
             </Button>
           )}
         </div>
+        {pasting && (
+          <form
+            className="mt-4 flex flex-col gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (pasted.trim()) save(Promise.resolve(pasted));
+            }}
+          >
+            <label className="text-sm" htmlFor="pasted-cookies">
+              Paste a cookies.txt, a JSON export or a Cookie header
+            </label>
+            <textarea
+              id="pasted-cookies"
+              value={pasted}
+              onChange={(event) => setPasted(event.currentTarget.value)}
+              rows={7}
+              spellCheck={false}
+              autoComplete="off"
+              placeholder={'[{"domain": ".youtube.com", "name": "SID", "value": "…"}, …]'}
+              className="w-full rounded-lg border border-border bg-background p-3 font-mono text-xs"
+            />
+            <div className="flex gap-3">
+              <Button type="submit" variant="primary" disabled={busy || !pasted.trim()}>
+                Save
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  setPasted("");
+                  setPasting(false);
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          </form>
+        )}
         {message && <p className={`mt-3 text-sm ${message.ok ? "" : "text-danger"}`} role="status">{message.text}</p>}
       </section>
 
-      <h2 className="mt-8 text-xl font-bold">Getting a cookies.txt</h2>
+      <h2 className="mt-8 text-xl font-bold">Getting your cookies</h2>
       <ol className="mt-3 list-decimal space-y-3 pl-5">
         <li>Sign in to YouTube in a browser on your computer (a secondary Google account is safer, see below).</li>
         <li>
-          Export its cookies in <strong>Netscape</strong> format, either with a cookies.txt browser extension while on
-          youtube.com, or with yt-dlp:{" "}
-          <Code>yt-dlp --cookies-from-browser chrome --cookies cookies.txt --skip-download https://www.youtube.com</Code>.
-          JSON exports don't work.
+          With youtube.com open, export its cookies in any of these, then upload the file or paste what you copied:
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            <li>
+              <strong>JSON</strong>, from a cookie extension such as Cookie-Editor or EditThisCookie (Export, or Export as
+              JSON).
+            </li>
+            <li>
+              <strong>cookies.txt</strong> (Netscape format), from a cookies.txt extension or from yt-dlp:{" "}
+              <Code>yt-dlp --cookies-from-browser chrome --cookies cookies.txt --skip-download https://www.youtube.com</Code>
+            </li>
+            <li>
+              <strong>A Cookie header</strong>, copied from a youtube.com request in the browser's developer tools
+              (Network, a request, Request Headers, cookie).
+            </li>
+          </ul>
         </li>
-        <li>Upload the file here. Then you can delete it from your computer.</li>
+        <li>It's converted to a cookies.txt on the server. Then you can delete the export from your computer.</li>
       </ol>
 
       <h2 className="mt-8 text-xl font-bold">Before you do</h2>
       <ul className="mt-3 list-disc space-y-2 pl-5 text-sm">
         <li>
-          Only the file's youtube.com cookies are kept. They're encrypted with a key only this server has before they're
+          Only the youtube.com cookies are kept. They're encrypted with a key only this server has before they're
           stored in your account, and they're never logged, shown again or sent to any page.
         </li>
         <li>

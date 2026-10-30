@@ -185,3 +185,28 @@ describe("AccessView", () => {
     await vi.waitFor(() => expect(calls.some((c) => c.method === "DELETE" && c.url === "/api/admin/allowlist/bea%40example.com")).toBe(true));
   });
 });
+
+describe("Your YouTube", () => {
+  it("takes pasted cookies in any format and doesn't keep them in the page", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    const { SignInView } = await import("@/views/SignInView");
+    vi.mocked(fetch).mockImplementation(async (url, init = {}) => {
+      calls.push({ method: init.method ?? "GET", url: String(url), body: init.body, headers: (init.headers ?? {}) as Record<string, string> });
+      if (url === "/api/me/cookies") return json({ ok: true, count: 21, uploaded_at: 1, format: "json" });
+      return json({ configured: false, signed_in: false, source: null, avatar_url: null, chips: [], detail: null, uploads: true });
+    });
+    render(
+      <AccountContext.Provider value={signedIn(bea)}>
+        <SignInView />
+      </AccountContext.Provider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Paste instead/ }));
+    const box = screen.getByLabelText(/Paste a cookies.txt, a JSON export or a Cookie header/);
+    const exported = '[{"domain": ".youtube.com", "name": "SID", "value": "x"}]';
+    fireEvent.change(box, { target: { value: exported } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText(/Saved 21 youtube.com cookies from a JSON export/)).toBeInTheDocument();
+    expect(calls.find((c) => c.url === "/api/me/cookies")).toMatchObject({ method: "PUT", body: exported });
+    expect(screen.queryByLabelText(/Paste a cookies.txt/)).toBeNull();
+  });
+});

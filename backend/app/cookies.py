@@ -21,6 +21,7 @@ import asyncio
 import copy
 import http.cookiejar
 import io
+import json
 import logging
 import os
 import re
@@ -141,6 +142,126 @@ def youtube_lines(text: str) -> list[str]:
             continue
         kept.append(line)
     return kept
+
+
+_TRUE_FALSE = {"TRUE", "FALSE"}
+_TOKEN_RE = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
+# A Cookie header carries no expiry; the converted cookies last this long (YouTube rotates them anyway).
+HEADER_COOKIE_DAYS = 400
+
+
+class UnknownCookieFormat(Exception):
+    """Not a cookies.txt, a JSON cookie export or a Cookie header."""
+
+
+def _expiry(raw: Any) -> str:
+    """Netscape's expiry: whole seconds since 1970, or 0 for a session cookie."""
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return "0"
+    return str(int(value)) if value > 0 else "0"
+
+
+def _line(domain: str, path: str, secure: bool, expiry: str, name: str, value: str, *, http_only: bool,
+          subdomains: bool | None = None) -> str | None:
+    """One Netscape line for a youtube.com cookie, or None for anything else or anything malformed."""
+    domain = domain.strip()
+    if not is_youtube_domain(domain) or not _TOKEN_RE.fullmatch(name) or any(c in value for c in "\t\r\n"):
+        return None
+    include = domain.startswith(".") if subdomains is None else subdomains
+    if include and not domain.startswith("."):
+        domain = "." + domain
+    fields = [domain, "TRUE" if include else "FALSE", path or "/", "TRUE" if secure else "FALSE", expiry, name, value]
+    return (_HTTPONLY_PREFIX if http_only else "") + "\t".join(fields)
+
+
+def _from_netscape(text: str) -> list[str]:
+    lines = []
+    for raw in text.splitlines():
+        http_only = raw.startswith(_HTTPONLY_PREFIX)
+        entry = raw[len(_HTTPONLY_PREFIX):] if http_only else raw
+        if not entry.strip() or entry.startswith("#"):
+            continue
+        fields = entry.split("\t")
+        if len(fields) != 7:
+            # Tabs turn into spaces when a cookies.txt is copied through a text box.
+            fields = entry.split(None, 6)
+        if len(fields) != 7 or fields[1].upper() not in _TRUE_FALSE or fields[3].upper() not in _TRUE_FALSE:
+            continue
+        domain, subdomains, path, secure, expiry, name, value = fields
+        line = _line(domain, path, secure.upper() == "TRUE", _expiry(expiry or 0), name, value.rstrip("\r"),
+                     http_only=http_only, subdomains=subdomains.upper() == "TRUE")
+        if line:
+            lines.append(line)
+    return lines
+
+
+def _from_json(text: str) -> list[str]:
+    """Cookie-Editor, EditThisCookie and browser tools write an array; Playwright and Puppeteer
+    write ``{"cookies": [...]}``."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        raise UnknownCookieFormat() from None
+    cookies = data.get("cookies") if isinstance(data, dict) else data
+    if not isinstance(cookies, list):
+        raise UnknownCookieFormat()
+    lines = []
+    for cookie in cookies:
+        if not isinstance(cookie, dict) or not isinstance(cookie.get("name"), str):
+            continue
+        domain = cookie.get("domain") or ""
+        if not isinstance(domain, str):
+            continue
+        expires = cookie.get("expirationDate", cookie.get("expires", cookie.get("expiry")))
+        host_only = cookie.get("hostOnly")
+        line = _line(domain, str(cookie.get("path") or "/"), bool(cookie.get("secure")),
+                     "0" if cookie.get("session") else _expiry(expires), cookie["name"], str(cookie.get("value", "")),
+                     http_only=bool(cookie.get("httpOnly")),
+                     subdomains=None if host_only is None else not host_only)
+        if line:
+            lines.append(line)
+    return lines
+
+
+def _from_header(text: str) -> list[str] | None:
+    """``name=value; name2=value2``, as copied from a youtube.com request's Cookie header."""
+    if "\n" in text or "\t" in text:
+        return None
+    if text.lower().startswith("cookie:"):
+        text = text[len("cookie:"):]
+    pairs = [part.strip() for part in text.split(";") if part.strip()]
+    if not pairs:
+        return None
+    expiry = str(int(time.time()) + HEADER_COOKIE_DAYS * 24 * 3600)
+    lines = []
+    for pair in pairs:
+        name, sep, value = pair.partition("=")
+        line = _line(".youtube.com", "/", True, expiry, name.strip(), value.strip(), http_only=False) if sep else None
+        if line is None:
+            return None
+        lines.append(line)
+    return lines
+
+
+def to_netscape(text: str) -> tuple[list[str], str]:
+    """An uploaded cookie export as the youtube.com lines of a Netscape cookies.txt, and its format.
+
+    Accepted: a Netscape cookies.txt (``"netscape"``; tabs, or spaces after a copy and paste), a
+    JSON export (``"json"``) and a Cookie request header (``"header"``). Other domains' cookies
+    are dropped. Raises :class:`UnknownCookieFormat` for anything else.
+    """
+    text = text.lstrip("\ufeff").strip()
+    if text.startswith(("[", "{")):
+        return _from_json(text), "json"
+    lines = _from_netscape(text)
+    if lines or "\t" in text or text.startswith("#"):
+        return lines, "netscape"
+    header = _from_header(text)
+    if header is not None:
+        return header, "header"
+    raise UnknownCookieFormat()
 
 
 def netscape_text(lines: list[str]) -> str:

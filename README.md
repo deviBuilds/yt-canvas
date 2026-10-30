@@ -313,7 +313,7 @@ Identical requests share one job; a file already in the cache yields an immediat
 | `POST /api/apps/plex/sessions/{id}/ping`, `DELETE /api/apps/plex/sessions/{id}`, `POST /api/apps/plex/timeline` | Keep a transcode alive, stop it, report progress |
 | `GET /api/auth/config` | Whether accounts are on, and Clerk's publishable key (always open) |
 | `GET /api/auth/me` | Who is signed in (accounts on) |
-| `PUT`/`DELETE /api/me/cookies` | Upload (a Netscape cookies.txt as the body) or remove your YouTube cookies (accounts on) |
+| `PUT`/`DELETE /api/me/cookies` | Upload (the body: a cookies.txt, a JSON cookie export or a Cookie header) or remove your YouTube cookies (accounts on) |
 | `GET /api/library`, `PUT /api/library/{favorites\|history\|searches}` `{entries}`, `DELETE /api/library/{list}[/{key}]` | Your library (accounts on) |
 | `GET`/`POST /api/admin/allowlist` `{emails}`, `DELETE /api/admin/allowlist/{email}` | Who may sign in (admins) |
 | `GET /api/pairing/status` | Whether this device is local, paired, or needs pairing |
@@ -338,7 +338,7 @@ Raw yt-dlp and FFmpeg output stays in the backend log with URL query strings red
 
 With a Clerk publishable key in `.env`, yt-canvas has accounts: everyone signs in, and only people on an allowlist can. Whatever is yours follows you to any device once you're signed in:
 
-- **Your YouTube:** upload a cookies.txt once (*Your YouTube* in the account menu); yt-dlp, Home, the personal feeds and related videos use it on every device.
+- **Your YouTube:** upload or paste your YouTube cookies once (*Your YouTube* in the account menu); yt-dlp, Home, the personal feeds and related videos use them on every device. A Netscape cookies.txt, a JSON export from a cookie extension (Cookie-Editor, EditThisCookie, or Playwright's `{"cookies": [...]}`) and a `Cookie:` header copied from a youtube.com request all work.
 - **Your Plex:** connect it once with Plex's PIN sign-in; any device you sign in on is connected.
 - **Your apps, favorites, history and continue watching**, and your recent searches.
 - **Your devices:** cars and TVs paired to your account, which you can see and revoke from any of your devices.
@@ -357,7 +357,7 @@ Without the key (or with `YTC_ACCOUNTS=off`), yt-canvas runs in **no-login mode*
 - **One trust boundary:** the browser only talks to the yt-canvas server. The server verifies Clerk's session token on every `/api` request (RS256 against the instance's JWKS, issuer, expiry, and `azp` against `YTC_ALLOWED_ORIGINS` or the request's own host) and reads the person's email from Clerk once (cached). API calls send the token as `Authorization: Bearer`; media and posters carry Clerk's `__session` cookie. Writes signed only by a cookie must come from the same origin.
 - **Convex** (`frontend/convex/`) holds users, the allowlist, devices, library entries and secrets. Only the server reaches it, through one HTTP action (`/backend`) guarded by `YTC_CONVEX_SECRET` that runs internal functions; no client can call them.
 - **Secrets** (your YouTube cookies, your Plex token) are encrypted with AES-256-GCM using `YTC_SECRETS_KEY` before they leave the server, bound to their owner, so Convex only ever stores ciphertext. Losing the key means everyone uploads cookies and connects Plex again.
-- **YouTube cookies:** only the upload's youtube.com lines are kept. yt-dlp gets them as `<config dir>/users/<tag>/cookies.txt` (mode 0600, rewritten from Convex when missing); cookies yt-dlp refreshes are encrypted and stored again, at most every 5 minutes. Pages and media fetched with someone's cookies (personal feeds, related videos, stream sessions, prepared files) are kept per person; public searches and feeds are shared.
+- **YouTube cookies:** whatever the format, the upload is converted to a Netscape cookies.txt holding only its youtube.com cookies (a cookies.txt whose tabs became spaces is read too; a `Cookie:` header has no expiry, so those cookies get 400 days). yt-dlp gets them as `<config dir>/users/<tag>/cookies.txt` (mode 0600, rewritten from Convex when missing); cookies yt-dlp refreshes are encrypted and stored again, at most every 5 minutes. Pages and media fetched with someone's cookies (personal feeds, related videos, stream sessions, prepared files) are kept per person; public searches and feeds are shared.
 - **The allowlist:** emails in Convex, managed on **Access** (`/access`, admins only). `YTC_ADMIN_EMAILS` are always allowed. Someone signed in but not listed gets 403 `not_invited`, and the Clerk webhook deletes accounts created by people who aren't listed. Removing an email locks out that person's paired devices too (within a minute).
 - **No secrets in logs:** cookie values, tokens and keys are never logged or returned by any API.
 
