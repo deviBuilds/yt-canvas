@@ -34,6 +34,9 @@ test("connect, browse and play from Plex", async ({ page }) => {
   // Direct play: H.264 + AAC in Matroska, read in byte ranges.
   await page.goto("/apps/plex/item/101");
   await expect(page.getByText("MKV · H.264 SD · AAC 2 ch")).toBeVisible();
+  // The poster keeps its 2:3 shape, whatever the image's own and whatever the text beside it.
+  const poster = await page.getByTestId("plex-poster").boundingBox();
+  expect(poster && poster.height / poster.width).toBeCloseTo(1.5, 2);
   await page.getByRole("link", { name: "Play" }).click();
   await startPlayback(page);
   expect(await engineKind(page)).toBe("webcodecs");

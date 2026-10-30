@@ -61,7 +61,11 @@ export function PlexItemPage({ itemKey }: { itemKey: string }) {
           <img
             src={(item.type === "episode" ? item.still : item.poster) ?? item.poster ?? ""}
             alt=""
-            className={`shrink-0 rounded-lg ${item.type === "episode" ? "w-full sm:w-80" : "w-40 sm:w-52"}`}
+            data-testid="plex-poster"
+            // self-start: a flex row would otherwise stretch it to the text's height.
+            className={`shrink-0 self-start rounded-lg object-cover ${
+              item.type === "episode" ? "aspect-video w-full sm:w-80" : "aspect-[2/3] w-40 sm:w-52"
+            }`}
           />
         )}
         <div className="min-w-0">
