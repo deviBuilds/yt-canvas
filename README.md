@@ -441,14 +441,14 @@ With accounts on, a device that can't easily sign in (a car, a TV) chooses **Pai
 
 ## Deploying
 
-`scripts/deploy.py` puts yt-canvas on its server (`ungate@5.75.169.86`, over ssh with `~/.ssh/ssh-key-ungate.key`) at **https://yt.devhomelab.app**, with accounts on. https://ytc.devhomelab.app, its first address (when it ran on gm-server-1-us), leads to the same app:
+`scripts/deploy.py` puts yt-canvas on its server (`ungate@5.75.169.86`, over ssh with `~/.ssh/ssh-key-ungate.key`) at **https://yt.devhomelab.app**, with accounts on:
 
 ```bash
 backend/.venv/bin/python scripts/deploy.py
 ```
 
 - **Convex:** pushes `frontend/convex` to the deployment in `CONVEX_DEPLOY_KEY` and sets its environment variables.
-- **Cloudflare** (`CF_ACCOUNT_API_TOKEN`): a remotely managed tunnel, `yt-canvas-public`, routes both hostnames to the app container, and a proxied CNAME points each at the tunnel. An existing DNS record that points elsewhere stops the deploy rather than being replaced.
+- **Cloudflare** (`CF_ACCOUNT_API_TOKEN`): a remotely managed tunnel, `yt-canvas-public`, routes the hostname to the app container, and a proxied CNAME points it at the tunnel. An existing DNS record that points elsewhere stops the deploy rather than being replaced.
 - **The server:** the code goes to `~/apps/yt-canvas` (without `.env`, cookies or build output), from the checkout or from `--source <dir>`, such as an export of the last commit that leaves out unfinished work; `deploy/.env` (the tunnel token) and `deploy/app.env` (the app's keys) are written there with mode 0600; `docker compose -f deploy/compose.yml up -d --build` builds the image (`Dockerfile`: the built frontend, the backend, FFmpeg and Deno) and starts it with its own cloudflared container. Nothing listens publicly; the app is on `127.0.0.1:3350` for health checks.
 - **YouTube from a datacenter:** YouTube won't play anything from this server's IP without cookies ("Sign in to confirm you're not a bot"), so each person uploads theirs (**Your YouTube** in the account menu). A `pot` container (bgutil-ytdlp-pot-provider 2.0.2) supplies the PO tokens YouTube also asks for; the app points yt-dlp's bgutil plugin at it with `YTC_POT_PROVIDER_URL`. Search and YouTube's pages work without cookies.
 - **Data:** the `data` volume holds the media cache (8 GB, 24 h; the server runs other apps too); the `config` volume holds each person's cookies file for yt-dlp. Everything else lives in Convex.

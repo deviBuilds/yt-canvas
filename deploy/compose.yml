@@ -1,6 +1,6 @@
 # yt-canvas on its server: the app and a dedicated Cloudflare Tunnel that carries
-# https://yt.devhomelab.app (and the older ytc.devhomelab.app) to it. Nothing listens
-# publicly; the app is published on localhost only, for health checks.
+# https://yt.devhomelab.app to it. Nothing listens publicly; the app is published on
+# localhost only, for health checks.
 #
 # Written next to this file by scripts/deploy.py (mode 0600, never committed):
 #   .env      TUNNEL_TOKEN, for the tunnel

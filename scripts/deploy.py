@@ -10,7 +10,6 @@ Each step is safe to repeat:
 1. Convex: push frontend/convex to the deployment in CONVEX_DEPLOY_KEY and set its env vars.
 2. Cloudflare (CF_ACCOUNT_API_TOKEN): a remotely managed tunnel, yt-canvas-public, whose
    ingress sends the hostnames to the app container, and a proxied CNAME for each hostname.
-   ytc.devhomelab.app, where the app ran first (on gm-server-1-us), still leads to it.
    An existing DNS record that points anywhere else is left alone and the deploy stops.
 3. The server: the code (the checkout, or --source) is copied to ~/apps/yt-canvas (no .env, cookies, or build output),
    deploy/.env (TUNNEL_TOKEN) and deploy/app.env (the app's keys) are written with mode 0600,
@@ -44,7 +43,7 @@ SSH_OPTIONS = ["-i", str(Path("~/.ssh/ssh-key-ungate.key").expanduser()), "-o", 
                "-o", "BatchMode=yes"]
 REMOTE_DIR = "apps/yt-canvas"
 HOSTNAME = "yt.devhomelab.app"
-HOSTNAMES = (HOSTNAME, "ytc.devhomelab.app")  # the first is the app's address; the rest still lead to it
+HOSTNAMES = (HOSTNAME,)  # every name the tunnel serves; the first is the app's address
 ZONE = "devhomelab.app"
 TUNNEL = "yt-canvas-public"
 SERVICE = "http://app:8000"
