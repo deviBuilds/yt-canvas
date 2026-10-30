@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 
 import { Link } from "@/router/router";
 
-import { itemLabel, plexPath, type PlexItem } from "./api";
+import { itemLabel, itemTitle, plexPath, type PlexItem } from "./api";
 
 /** Movies and shows open their page; episodes and movies with progress can also play straight away. */
 export const itemPath = (item: PlexItem) => plexPath("item", item.key);
@@ -28,19 +28,28 @@ function Artwork({ src, alt }: { src: string | null; alt: string }) {
   );
 }
 
-/** A 2:3 poster for movies, shows and seasons; a 16:9 still for episodes. */
+/**
+ * A 2:3 poster for movies, shows and seasons; a 16:9 still for episodes. A season that stands
+ * for several new episodes is named after its show and badged with how many.
+ */
 export function PosterCard({ item }: { item: PlexItem }) {
   const wide = item.type === "episode";
+  const title = itemTitle(item);
   return (
-    <Link to={itemPath(item)} className="group block min-w-0" aria-label={`${item.title}${itemLabel(item) ? `, ${itemLabel(item)}` : ""}`}>
+    <Link to={itemPath(item)} className="group block min-w-0" aria-label={`${title}${itemLabel(item) ? `, ${itemLabel(item)}` : ""}`}>
       <div className={`relative overflow-hidden rounded-lg bg-secondary ${wide ? "aspect-video" : "aspect-[2/3]"}`}>
         <Artwork src={wide ? (item.still ?? item.poster) : item.poster} alt="" />
+        {item.new_episodes ? (
+          <span className="absolute left-1.5 top-1.5 rounded bg-[#e5a00d] px-1.5 py-0.5 text-xs font-bold text-black" aria-hidden="true">
+            {item.new_episodes} new
+          </span>
+        ) : null}
         {item.watched && (
           <CircleCheck className="absolute right-1.5 top-1.5 size-5 rounded-full bg-black/60 text-[#e5a00d]" aria-label="Watched" />
         )}
         <Progress item={item} />
       </div>
-      <p className="mt-1.5 truncate text-sm font-medium group-hover:underline">{item.title}</p>
+      <p className="mt-1.5 truncate text-sm font-medium group-hover:underline">{title}</p>
       <p className="truncate text-xs text-muted-foreground">{itemLabel(item)}</p>
     </Link>
   );

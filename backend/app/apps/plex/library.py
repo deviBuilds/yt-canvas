@@ -49,6 +49,8 @@ class PlexItem(BaseModel):
     episode: int | None = None
     child_count: int | None = None
     library: str | None = None
+    # Recently added: several new episodes of one season, shown as that season.
+    new_episodes: int | None = None
 
 
 class PlexStream(BaseModel):
@@ -146,6 +148,50 @@ def item(raw: dict[str, Any]) -> PlexItem:
     )
 
 
+RECENT_ROW = 24  # cards in a recently added row
+RECENT_FETCH = 400  # episodes read to fill it once they're grouped (a whole series may arrive at once)
+
+
+def group_recent(raws: list[dict[str, Any]], limit: int = RECENT_ROW) -> list[PlexItem]:
+    """Recently added, with episodes grouped by season as Plex's own apps do.
+
+    Plex lists every new episode on its own. Several new episodes of one season become one
+    card for that season (its poster, or the show's, with the season number); a lone episode
+    stays an episode. Cards keep the order of each group's newest entry.
+    """
+    seasons: dict[str, list[dict[str, Any]]] = {}
+    order: list[tuple[str, str]] = []  # ("season", season key) or ("item", index)
+    for index, raw in enumerate(raws):
+        season_key = raw.get("parentRatingKey")
+        if raw.get("type") == "episode" and season_key:
+            if str(season_key) not in seasons:
+                order.append(("season", str(season_key)))
+            seasons.setdefault(str(season_key), []).append(raw)
+        else:
+            order.append(("item", str(index)))
+    cards: list[PlexItem] = []
+    seen: set[str] = set()
+    for kind, key in order:
+        episodes = seasons.get(key, []) if kind == "season" else []
+        if kind == "item" or len(episodes) == 1:
+            card = item(raws[int(key)] if kind == "item" else episodes[0])
+        else:
+            first = episodes[0]
+            card = PlexItem(
+                key=key, type="season", title=first.get("parentTitle") or f"Season {first.get('parentIndex', '?')}",
+                poster=image_url(first.get("parentThumb") or first.get("grandparentThumb"), 300, 450),
+                art=image_url(first.get("grandparentArt") or first.get("art"), 1280, 720),
+                show_title=first.get("grandparentTitle"), season=_int(first.get("parentIndex")),
+                watched=all(_int(e.get("viewCount")) for e in episodes), new_episodes=len(episodes),
+                library=first.get("librarySectionTitle"))
+        if card.key and card.key not in seen:
+            seen.add(card.key)
+            cards.append(card)
+        if len(cards) >= limit:
+            break
+    return cards
+
+
 def media(raw: dict[str, Any]) -> PlexMedia:
     part = (raw.get("Part") or [{}])[0]
     streams = []
@@ -214,9 +260,10 @@ class PlexLibraryService:
             continue_watching = [item(m) for m in on_deck.get("Metadata", [])]
         rows = []
         for library in await self.libraries():
+            size = RECENT_FETCH if library.type == "show" else RECENT_ROW
             recent = await self.plex.json(f"/library/sections/{library.key}/recentlyAdded",
-                                          {"X-Plex-Container-Start": 0, "X-Plex-Container-Size": 24}, what="library")
-            items = [item(m) for m in recent.get("Metadata", [])]
+                                          {"X-Plex-Container-Start": 0, "X-Plex-Container-Size": size}, what="library")
+            items = group_recent(recent.get("Metadata", []))
             if items:
                 rows.append(PlexRow(library=library, items=items))
         return PlexHome(continue_watching=continue_watching, rows=rows)

@@ -54,6 +54,8 @@ export interface PlexItem {
   episode: number | null;
   child_count: number | null;
   library: string | null;
+  /** Recently added: this season stands for this many of its new episodes. */
+  new_episodes?: number | null;
 }
 
 export interface PlexStream {
@@ -148,7 +150,15 @@ export const plexApi = {
 
 export const plexPath = (...parts: Array<string | number>) => ["/apps/plex", ...parts.map((p) => encodeURIComponent(String(p)))].join("/");
 
+const newEpisodes = (count: number) => (count === 1 ? "1 new episode" : `${count} new episodes`);
+
+/** A card's title: a season standing for new episodes is named after its show. */
+export function itemTitle(item: PlexItem): string {
+  return item.new_episodes && item.type === "season" ? (item.show_title ?? item.title) : item.title;
+}
+
 export function itemLabel(item: PlexItem): string {
+  if (item.new_episodes) return `${item.title} · ${newEpisodes(item.new_episodes)}`;
   if (item.type === "episode") return `${item.show_title ?? ""} · S${item.season ?? "?"} E${item.episode ?? "?"}`;
   if (item.type === "season") return item.child_count ? `${item.child_count} episodes` : "";
   if (item.type === "show") return [item.year, item.child_count ? `${item.child_count} seasons` : null].filter(Boolean).join(" · ");
