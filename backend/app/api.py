@@ -8,6 +8,7 @@ from fastapi import APIRouter, Query, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from .accounts.users import current_user
 from .apps import AppList, AppRegistry, AppView
 from .diagnostics import (
     MAX_REPORT_BYTES,
@@ -29,6 +30,7 @@ from .media.models import JobView, StreamView
 from .media.storage import MediaStorage
 from .media.streams import StreamManager
 from .models import Feed, FeedList, Me, Page, RelatedVideos
+from .session import youtube_settings
 from .validation import parse_input
 
 router = APIRouter(prefix="/api")
@@ -43,6 +45,9 @@ def _feeds(request: Request) -> YouTubePagesService:
 
 
 def _account(request: Request) -> AccountService:
+    """The YouTube account of whoever is asking (the server's own in no-login mode)."""
+    if request.app.state.settings.accounts_enabled:
+        return request.app.state.user_youtube.account_service(current_user())
     return request.app.state.account
 
 
@@ -70,7 +75,8 @@ async def health(request: Request) -> dict:
         "demo_enabled": state.settings.enable_demo,
         "feeds_enabled": state.settings.enable_feeds,
         "streaming_enabled": state.settings.enable_streaming,
-        "signed_in_configured": state.settings.signed_in_configured,
+        "signed_in_configured": youtube_settings(state.settings).signed_in_configured,
+        "accounts": state.settings.accounts_enabled,
         "max_height": state.settings.max_height,
         "dependencies": deps.to_dict(),
     }
@@ -121,7 +127,13 @@ async def related(request: Request, video_id: str) -> RelatedVideos:
 @router.get("/me", response_model=Me)
 async def me(request: Request) -> Me:
     """The signed-in YouTube session. No network access unless sign-in is configured."""
-    return await _account(request).me()
+    me = await _account(request).me()
+    user = current_user()
+    if not request.app.state.settings.accounts_enabled or user is None:
+        return me
+    meta = request.app.state.accounts.latest(user).secret_meta("youtube_cookies") or {}
+    return me.model_copy(update={"uploads": True, "uploaded_at": meta.get("uploaded_at"),
+                                 "cookie_count": meta.get("count")})
 
 
 @router.get("/me/feed/{feed_id}", response_model=Page)
@@ -240,7 +252,7 @@ async def list_apps(request: Request) -> AppList:
 
 @router.put("/apps/{app_id}", response_model=AppView)
 async def set_app_enabled(request: Request, app_id: str, body: AppToggle) -> AppView:
-    return _apps(request).set_enabled(app_id, body.enabled)
+    return await _apps(request).set_enabled(app_id, body.enabled)
 
 
 # -- browser check (/check) --------------------------------------------------------------

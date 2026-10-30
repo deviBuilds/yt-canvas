@@ -16,6 +16,11 @@ export interface CachedRequest<T> {
  * Fetch once per ``key`` and keep the result for this browser session (10 min),
  * so moving between pages doesn't refetch YouTube shelves. ``key: null`` skips.
  */
+/** Drop a cached result, so the next use of ``key`` fetches again. */
+export function forgetCached(key: string): void {
+  cache.delete(key);
+}
+
 export function useCachedRequest<T>(key: string | null, fetcher: (signal: AbortSignal) => Promise<T>): CachedRequest<T> {
   const cached = key ? cache.get(key) : undefined;
   const fresh = cached && Date.now() - cached.at < TTL_MS ? (cached.data as T) : null;

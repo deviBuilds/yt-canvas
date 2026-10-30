@@ -49,7 +49,8 @@ def pair(car: TestClient, home: TestClient) -> str:
 def test_a_device_pairs_with_a_code_typed_in_on_this_computer(app, settings):
     with remote(app) as car, local(app) as home:
         assert car.get("/api/apps/fake/hello").status_code == 403
-        assert car.get("/api/pairing/status").json() == {"local": False, "paired": False, "required": True, "device": None}
+        assert car.get("/api/pairing/status").json() == {"local": False, "paired": False, "required": True, "device": None,
+                                                       "accounts": False}
 
         created = car.post("/api/pairing/requests", json={"name": "Tesla"})
         request = created.json()
@@ -72,7 +73,8 @@ def test_a_device_pairs_with_a_code_typed_in_on_this_computer(app, settings):
         assert "max-age=34560000" in device_cookie and "path=/" in device_cookie
 
         assert car.get("/api/apps/fake/hello").json() == {"hello": "world"}
-        assert car.get("/api/pairing/status").json() == {"local": False, "paired": True, "required": True, "device": "Tesla"}
+        assert car.get("/api/pairing/status").json() == {"local": False, "paired": True, "required": True, "device": "Tesla",
+                                                       "accounts": False}
         # The request is used up.
         assert car.get(f"/api/pairing/requests/{request['id']}").json() == {"state": "expired"}
 

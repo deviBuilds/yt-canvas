@@ -21,7 +21,11 @@ export function PairingGate({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-function PairDevice() {
+/**
+ * Asks for a pairing code and waits for it to be approved. With accounts on (``accounts``), the
+ * code is approved on Devices by anyone signed in, and the device joins their account.
+ */
+export function PairDevice({ accounts = false, onCancel }: { accounts?: boolean; onCancel?: () => void }) {
   const [name, setName] = useState("");
   const [pending, setPending] = useState<PairingRequest | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -63,11 +67,17 @@ function PairDevice() {
         <MonitorSmartphone className="size-8" aria-hidden="true" /> Pair this device
       </h1>
       <p className="mt-3 text-muted-foreground">
-        This yt-canvas holds private things, like your Plex library, so it only opens for devices you've paired.
+        {accounts
+          ? "Use yt-canvas on this device without signing in on it, like in a car: pair it to your account with a code."
+          : "This yt-canvas holds private things, like your Plex library, so it only opens for devices you've paired."}
       </p>
       {pending ? (
         <section className="mt-8 rounded-2xl bg-secondary p-6 text-center" aria-live="polite">
-          <p className="text-sm text-muted-foreground">On the computer running yt-canvas, open the Devices page and enter</p>
+          <p className="text-sm text-muted-foreground">
+            {accounts
+              ? "On a phone or computer where you're signed in to yt-canvas, open Devices from your account menu and enter"
+              : "On the computer running yt-canvas, open the Devices page and enter"}
+          </p>
           <p className="my-4 font-mono text-6xl font-bold tracking-[0.2em]" data-testid="pairing-code">
             {pending.code}
           </p>
@@ -93,6 +103,11 @@ function PairDevice() {
             Pair this device
           </Button>
         </section>
+      )}
+      {onCancel && (
+        <Button variant="ghost" className="mt-6 self-start" onClick={onCancel}>
+          Sign in instead
+        </Button>
       )}
     </main>
   );

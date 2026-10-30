@@ -27,7 +27,9 @@ class YtDlpDiscoveryProvider:
         # Items are 1-based and the range is inclusive; fetch limit + 1 to probe for more.
         items = f"{offset + 1}:{offset + limit + 1}"
         args = [
-            *base_args(self.settings),
+            # Listings are shared between people, so they use the settings this provider was made
+            # with: the server's, or one person's for their own feeds (discovery/account.py).
+            *base_args(self.settings, personal=False),
             "--flat-playlist",
             "--dump-single-json",
             "--no-warnings",

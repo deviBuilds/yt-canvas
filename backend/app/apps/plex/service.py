@@ -60,9 +60,9 @@ SignInState.model_rebuild()
 
 
 class PlexService:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, store: PlexStore | None = None) -> None:
         self.settings = settings
-        self.store = PlexStore(settings.app_config_dir)
+        self.store = store or PlexStore(settings.app_config_dir)
 
     # -- status and sign-in -------------------------------------------------------------
 

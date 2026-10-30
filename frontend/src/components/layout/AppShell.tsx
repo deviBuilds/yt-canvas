@@ -1,4 +1,18 @@
-import { Blocks, CircleUserRound, Compass, Heart, History, Library, LogIn, Menu, UserRound, type LucideIcon } from "lucide-react";
+import {
+  Blocks,
+  CircleUserRound,
+  Compass,
+  Heart,
+  History,
+  Library,
+  LogIn,
+  LogOut,
+  Menu,
+  MonitorSmartphone,
+  ShieldCheck,
+  UserRound,
+  type LucideIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -16,6 +30,7 @@ import { PERSONAL_FEEDS, personalFeedPath } from "@/account/feeds";
 import { useMe } from "@/account/useMe";
 import { APP_MODULES, appPath } from "@/apps/registry";
 import { useApps } from "@/apps/store";
+import { useAccount } from "@/auth/AccountContext";
 import { ChannelAvatar } from "@/components/ui/avatar";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { Tip } from "@/components/ui/tooltip";
@@ -33,17 +48,20 @@ import { Logo } from "./Logo";
 const GUIDE_KEY = "ytc.guide.v1";
 
 /**
- * The avatar menu at the top right, where YouTube keeps your account. Signed in
- * (opt-in, see /signin) it shows your YouTube avatar and lists; otherwise it
- * holds this browser's library and the appearance setting.
+ * The avatar menu at the top right, where YouTube keeps your account. With accounts on it
+ * starts with who's signed in, their devices and Sign out. Signed in to YouTube (opt-in, see
+ * /signin) it shows your YouTube avatar and lists; otherwise it holds the library and the
+ * appearance setting.
  */
 function AccountMenu() {
   const { mode, setMode } = useTheme();
   const { navigate } = useRouter();
   const { me } = useMe();
+  const { user, signOut } = useAccount();
+  const picture = me.signed_in ? me.avatar_url : (user?.image_url ?? null);
   const avatar = (size: string) =>
-    me.signed_in ? (
-      <ChannelAvatar name="You" src={me.avatar_url} className={size} />
+    picture ? (
+      <ChannelAvatar name={user?.name ?? "You"} src={picture} className={size} />
     ) : (
       <span className={cn("flex shrink-0 items-center justify-center rounded-full bg-[#7e57c2] text-white", size)}>
         <UserRound className="size-[60%]" strokeWidth={2} aria-hidden="true" />
@@ -62,10 +80,21 @@ function AccountMenu() {
         <div className="flex items-center gap-4 px-4 pb-3 pt-2">
           {avatar("size-10")}
           <div className="min-w-0">
-            <p className="font-medium">{me.signed_in ? "Signed in to YouTube" : "You"}</p>
-            <p className="text-sm text-muted-foreground">
-              {me.signed_in ? `Using ${me.source ?? "browser"} cookies` : "Saved in this browser"}
-            </p>
+            {user ? (
+              <>
+                <p className="truncate font-medium">{user.name ?? user.email}</p>
+                <p className="truncate text-sm text-muted-foreground">
+                  {user.via === "device" ? `${user.device ?? "This device"}, paired to ${user.email}` : user.email}
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="font-medium">{me.signed_in ? "Signed in to YouTube" : "You"}</p>
+                <p className="text-sm text-muted-foreground">
+                  {me.signed_in ? `Using ${me.source ?? "browser"} cookies` : "Saved in this browser"}
+                </p>
+              </>
+            )}
           </div>
         </div>
         <DropdownMenuSeparator />
@@ -93,8 +122,23 @@ function AccountMenu() {
           </>
         )}
         <DropdownMenuItem onSelect={() => navigate("/signin")}>
-          <LogIn /> {me.signed_in ? "YouTube sign-in" : "Sign in with YouTube"}
+          <LogIn /> {user ? "Your YouTube" : me.signed_in ? "YouTube sign-in" : "Sign in with YouTube"}
         </DropdownMenuItem>
+        {user && (
+          <>
+            <DropdownMenuItem onSelect={() => navigate("/devices")}>
+              <MonitorSmartphone /> Devices
+            </DropdownMenuItem>
+            {user.admin && (
+              <DropdownMenuItem onSelect={() => navigate("/access")}>
+                <ShieldCheck /> Access
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onSelect={signOut}>
+              <LogOut /> Sign out
+            </DropdownMenuItem>
+          </>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuLabel>Appearance</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={mode} onValueChange={(value) => setMode(value as ThemeMode)}>
@@ -148,6 +192,7 @@ function GuideSection({ title, children }: { title?: string; children: ReactNode
 function Guide({ onNavigate }: { onNavigate?: () => void }) {
   const { feeds } = useEnabledFeeds();
   const { me, known } = useMe();
+  const { accounts } = useAccount();
   const apps = useApps();
   const personal = (id: keyof typeof PERSONAL_FEEDS) => (
     <GuideEntry to={personalFeedPath(id)} icon={PERSONAL_FEEDS[id].icon} label={PERSONAL_FEEDS[id].title} onNavigate={onNavigate} />
@@ -175,10 +220,14 @@ function Guide({ onNavigate }: { onNavigate?: () => void }) {
       )}
       {known && !me.signed_in ? (
         <GuideSection>
-          <p className="px-3 py-1 text-sm leading-5">Sign in to see your recommendations, subscriptions and playlists.</p>
+          <p className="px-3 py-1 text-sm leading-5">
+            {accounts
+              ? "Add your YouTube to see your recommendations, subscriptions and playlists."
+              : "Sign in to see your recommendations, subscriptions and playlists."}
+          </p>
           <Button asChild variant="outline" size="sm" className="ml-3 mt-2">
             <Link to="/signin" onClick={onNavigate}>
-              <CircleUserRound /> Sign in
+              <CircleUserRound /> {accounts ? "Add YouTube" : "Sign in"}
             </Link>
           </Button>
         </GuideSection>

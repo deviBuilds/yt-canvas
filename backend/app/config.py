@@ -176,12 +176,39 @@ class Settings:
     # Plex sign-in: plex.tv's API and the page where people approve a sign-in (overridable for tests).
     plex_tv_url: str = "https://plex.tv"
     plex_auth_url: str = "https://app.plex.tv/auth"
+    # Accounts (Clerk sign-in, data in Convex). Off unless a Clerk publishable key is set: without
+    # one, yt-canvas runs in no-login mode (one implicit user, this computer and paired devices).
+    clerk_publishable_key: str | None = None
+    clerk_secret_key: str | None = None
+    clerk_api_url: str = "https://api.clerk.com"
+    # Clerk's PEM public key (CLERK_JWT_KEY): verifies session tokens without fetching the JWKS.
+    clerk_jwt_key: str | None = None
+    convex_site_url: str | None = None  # https://<deployment>.convex.site
+    convex_secret: str | None = None  # shared with the /backend HTTP action
+    secrets_key: str | None = None  # AES-256-GCM key (urlsafe base64) for secrets kept in Convex
+    admin_emails: tuple[str, ...] = ()
+    # Origins whose session tokens are accepted (the token's azp). Empty: the request's own origin.
+    allowed_origins: tuple[str, ...] = ()
+    # The server-wide YouTube cookies were configured but are ignored because accounts are on.
+    ignored_server_cookies: bool = False
 
     def __post_init__(self) -> None:
         if self.cookies_from_browser is not None:
             parse_browser_spec(self.cookies_from_browser)
         if self.cookies_from_browser and self.cookies_file:
             raise ValueError("Set only one of YTC_YTDLP_COOKIES_FROM_BROWSER and YTC_YTDLP_COOKIES_FILE.")
+        if self.accounts_enabled:
+            missing = [name for name, value in (("CLERK_SECRET_KEY", self.clerk_secret_key),
+                                                ("CONVEX_SITE_URL", self.convex_site_url),
+                                                ("YTC_CONVEX_SECRET", self.convex_secret),
+                                                ("YTC_SECRETS_KEY", self.secrets_key)) if not value]
+            if missing:
+                raise ValueError(f"Accounts are on (a Clerk publishable key is set), so these must be set too: "
+                                 f"{', '.join(missing)}. Or set YTC_ACCOUNTS=off for no-login mode.")
+
+    @property
+    def accounts_enabled(self) -> bool:
+        return bool(self.clerk_publishable_key)
 
     @property
     def signed_in_configured(self) -> bool:
@@ -227,8 +254,20 @@ class Settings:
         return f"{self.max_height}p"
 
 
+def _first(*names: str) -> str | None:
+    """The first of these environment variables that is set (Clerk and Convex have several spellings)."""
+    for name in names:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return None
+
+
 def load_settings() -> Settings:
     _load_dotenv()
+    accounts = _str("YTC_ACCOUNTS", "auto").lower() != "off"
+    publishable = _first("YTC_CLERK_PUBLISHABLE_KEY", "CLERK_PUBLISHABLE_KEY", "VITE_CLERK_PUBLISHABLE_KEY",
+                         "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY") if accounts else None
     data_dir = Path(_str("YTC_DATA_DIR", str(Path(tempfile.gettempdir()) / "yt-canvas"))).expanduser()
 
     ytdlp_cmd_raw = os.environ.get("YTC_YTDLP_COMMAND", "").strip()
@@ -239,6 +278,10 @@ def load_settings() -> Settings:
 
     browser_raw = os.environ.get("YTC_YTDLP_COOKIES_FROM_BROWSER", "").strip()
     cookies_raw = os.environ.get("YTC_YTDLP_COOKIES_FILE", "").strip()
+    # With accounts on, everyone brings their own cookies; the server-wide ones are left alone.
+    ignored_server_cookies = bool(publishable and (browser_raw or cookies_raw))
+    if publishable:
+        browser_raw = cookies_raw = ""
     cookies_file = None
     if cookies_raw:
         cookies_file = Path(cookies_raw).expanduser().absolute()
@@ -291,4 +334,14 @@ def load_settings() -> Settings:
         enable_apps=_bool("YTC_ENABLE_APPS", True),
         plex_tv_url=_str("YTC_PLEX_TV_URL", "https://plex.tv").rstrip("/"),
         plex_auth_url=_str("YTC_PLEX_AUTH_URL", "https://app.plex.tv/auth"),
+        clerk_publishable_key=publishable,
+        clerk_secret_key=_first("CLERK_SECRET_KEY"),
+        clerk_api_url=_str("YTC_CLERK_API_URL", "https://api.clerk.com").rstrip("/"),
+        clerk_jwt_key=_first("CLERK_JWT_KEY"),
+        convex_site_url=(_first("CONVEX_SITE_URL", "CONVEX_ENDPOINT") or "").rstrip("/") or None,
+        convex_secret=_first("YTC_CONVEX_SECRET"),
+        secrets_key=_first("YTC_SECRETS_KEY"),
+        admin_emails=tuple(e.strip().lower() for e in _str("YTC_ADMIN_EMAILS", "").split(",") if e.strip()),
+        allowed_origins=tuple(o.strip().rstrip("/") for o in _str("YTC_ALLOWED_ORIGINS", "").split(",") if o.strip()),
+        ignored_server_cookies=ignored_server_cookies,
     )

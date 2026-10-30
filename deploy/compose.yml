@@ -1,0 +1,41 @@
+# yt-canvas on the home lab: the app and a dedicated Cloudflare Tunnel that carries
+# https://ytc.devhomelab.app to it. Nothing listens publicly; the app is published on
+# localhost only, for health checks.
+#
+# Written next to this file by scripts/deploy.py (mode 0600, never committed):
+#   .env      TUNNEL_TOKEN, for the tunnel
+#   app.env   the app's accounts keys and settings
+#   docker compose -f deploy/compose.yml up -d --build
+name: yt-canvas
+
+services:
+  app:
+    build:
+      context: ..
+    image: yt-canvas:prod
+    restart: unless-stopped
+    env_file: app.env
+    environment:
+      YTC_ALLOWED_ORIGINS: https://ytc.devhomelab.app
+    volumes:
+      - data:/data
+      - config:/config
+    ports:
+      - "127.0.0.1:3350:8000"
+
+  # Same pinned cloudflared image as the other tunnels on this host.
+  tunnel:
+    image: cloudflare/cloudflared@sha256:9b49eed8f62806d5d45ddf59ecefb5710429598ea6d3fcccd2af938f621b2b07
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set in deploy/.env}
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  # The media cache, and per-user files (YouTube cookie files for yt-dlp, rewritten from the
+  # encrypted copies in Convex whenever they're missing).
+  data:
+  config:

@@ -495,7 +495,7 @@ def test_me_not_configured_makes_no_network_calls(monkeypatch, settings):
     with TestClient(create_app(settings)) as client:
         assert client.get("/api/me").json() == {
             "configured": False, "signed_in": False, "source": None, "avatar_url": None, "chips": [],
-            "detail": None,
+            "detail": None, "uploads": False, "uploaded_at": None, "cookie_count": None,
         }
         assert client.get("/api/health").json()["signed_in_configured"] is False
     assert fetch.calls == []
@@ -524,6 +524,7 @@ def test_me_logged_out_page(monkeypatch, file_settings):
         "configured": True, "signed_in": False, "source": "cookies file", "avatar_url": None, "chips": [],
         "detail": "YouTube didn't accept the cookies from the cookies file: they're signed out or expired. "
                   "Export a fresh cookies.txt while signed in to YouTube, then reload.",
+        "uploads": False, "uploaded_at": None, "cookie_count": None,
     }
     # Only the file's youtube.com cookies were sent.
     assert fetch.calls == [("https://www.youtube.com/", [
@@ -539,6 +540,7 @@ def test_me_logged_in_page_is_cached(monkeypatch, browser_settings):
     assert first == {
         "configured": True, "signed_in": True, "source": "chrome", "avatar_url": AVATAR_176,
         "chips": ["Music", "Podcasts", "Recently uploaded"], "detail": None,
+        "uploads": False, "uploaded_at": None, "cookie_count": None,
     }
     assert second == first
     assert fetch.calls == [("https://www.youtube.com/", [(".youtube.com", "SID")])]

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from fastapi import APIRouter, Depends, FastAPI
 from pydantic import BaseModel
 
+from ..accounts.users import Accounts, current_user, require_user
 from ..config import Settings
 from ..errors import AppError
 
@@ -51,18 +52,27 @@ class AppList(BaseModel):
 
 
 class AppRegistry:
-    def __init__(self, settings: Settings, specs: list[AppSpec]) -> None:
+    """Which apps are on: for the whole server in no-login mode, for each person with accounts."""
+
+    def __init__(self, settings: Settings, specs: list[AppSpec], accounts: Accounts | None = None) -> None:
         self.settings = settings
         self.specs = {spec.id: spec for spec in specs}
+        self.accounts = accounts
         self._path = settings.app_config_dir / "apps.json"
-        self._enabled = self._load()
+        self._enabled = self._load() if accounts is None else set()
 
     @property
     def available(self) -> bool:
         return self.settings.enable_apps
 
+    def _enabled_now(self) -> set[str]:
+        if self.accounts is None:
+            return self._enabled
+        user = current_user()
+        return set(self.accounts.latest(user).apps) if user is not None else set()
+
     def is_enabled(self, app_id: str) -> bool:
-        return self.available and app_id in self._enabled
+        return self.available and app_id in self._enabled_now()
 
     def spec(self, app_id: str) -> AppSpec:
         spec = self.specs.get(app_id)
@@ -78,17 +88,20 @@ class AppRegistry:
     def listing(self) -> AppList:
         return AppList(available=self.available, apps=[self.view(spec) for spec in self.specs.values()])
 
-    def set_enabled(self, app_id: str, enabled: bool) -> AppView:
+    async def set_enabled(self, app_id: str, enabled: bool) -> AppView:
         spec = self.spec(app_id)
         if not self.available:
             raise AppError("forbidden", "Apps are turned off on this server (YTC_ENABLE_APPS=false).", status=403)
-        if enabled:
-            self._enabled.add(app_id)
-        elif app_id in self._enabled:
-            self._enabled.discard(app_id)
-            if spec.on_disable:
-                spec.on_disable()
-        self._save()
+        apps = set(self._enabled_now())
+        was_on = app_id in apps
+        apps = apps | {app_id} if enabled else apps - {app_id}
+        if self.accounts is not None:
+            await self.accounts.set_apps(require_user(), apps)
+        else:
+            self._enabled = apps
+            self._save()
+        if was_on and not enabled and spec.on_disable:
+            spec.on_disable()
         log.info("app %s %s", app_id, "enabled" if enabled else "disabled")
         return self.view(spec)
 

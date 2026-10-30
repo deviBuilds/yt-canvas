@@ -15,11 +15,15 @@ from typing import Any
 from .config import Settings
 from .errors import AppError, redact
 from .procs import ExecutableNotFound, OutputLimitExceeded, ProcessResult, ProcessTimeout, run_process
+from .session import youtube_settings
 
 log = logging.getLogger(__name__)
 
 
-def base_args(settings: Settings) -> list[str]:
+def base_args(settings: Settings, *, personal: bool = True) -> list[str]:
+    """yt-dlp's fixed arguments. ``personal``: with the signed-in person's cookies, if any
+    (see :mod:`app.session`); discovery listings pass False and use ``settings`` as given."""
+    cookies = youtube_settings(settings) if personal else settings
     args = [
         *settings.ytdlp_command,
         "--ignore-config",
@@ -36,11 +40,11 @@ def base_args(settings: Settings) -> list[str]:
         args += ["--js-runtimes", runtime]
     # Opt-in sign-in. yt-dlp reads the cookies itself on every run; with --cookies it also
     # writes the (possibly refreshed) jar back to that file when it exits.
-    spec = settings.browser_spec
+    spec = cookies.browser_spec
     if spec is not None:
         args += ["--cookies-from-browser", spec.to_arg()]
-    elif settings.cookies_file is not None:
-        args += ["--cookies", str(settings.cookies_file)]
+    elif cookies.cookies_file is not None:
+        args += ["--cookies", str(cookies.cookies_file)]
     return args
 
 

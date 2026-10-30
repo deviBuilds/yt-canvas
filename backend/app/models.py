@@ -93,3 +93,7 @@ class Me(BaseModel):
     chips: list[str] = []
     # Why signed_in is false (or null when it isn't, or when sign-in isn't configured).
     detail: str | None = None
+    # Accounts are on: each person uploads their own cookies.txt (PUT /api/me/cookies).
+    uploads: bool = False
+    uploaded_at: float | None = None
+    cookie_count: int | None = None

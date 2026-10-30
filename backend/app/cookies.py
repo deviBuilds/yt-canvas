@@ -121,18 +121,15 @@ def browser_jar(spec: BrowserSpec, logger: _CookieLogger) -> Any:
     return ytc.extract_cookies_from_browser(browser, profile, logger, keyring=keyring, container=container)
 
 
-def file_jar(path: Path) -> http.cookiejar.CookieJar:
-    """Parse the youtube.com lines of a Netscape cookies.txt (blocking; worker thread only).
+def youtube_lines(text: str) -> list[str]:
+    """The well-formed youtube.com lines of a Netscape cookies.txt, without their line endings.
 
-    Lines for other domains and malformed lines are dropped before parsing, so yt-dlp's
-    parser never warns about (and prints) a line.
+    Raises :class:`NotNetscapeFormat` for JSON exports. Lines for other domains and malformed
+    lines are dropped, so yt-dlp's parser never warns about (and prints) a line.
     """
-    from yt_dlp.cookies import YoutubeDLCookieJar
-
-    text = path.read_text("utf-8", errors="replace")
     if text.lstrip().startswith(("[", "{")):
         raise NotNetscapeFormat()
-    kept = ["# Netscape HTTP Cookie File\n"]
+    kept = []
     for line in text.splitlines():
         entry = line[len(_HTTPONLY_PREFIX):] if line.startswith(_HTTPONLY_PREFIX) else line
         if not entry.strip() or entry.startswith("#"):
@@ -142,9 +139,21 @@ def file_jar(path: Path) -> http.cookiejar.CookieJar:
             continue
         if fields[4] and not _EXPIRES_RE.fullmatch(fields[4]):
             continue
-        kept.append(line + "\n")
+        kept.append(line)
+    return kept
+
+
+def netscape_text(lines: list[str]) -> str:
+    return "# Netscape HTTP Cookie File\n" + "".join(line + "\n" for line in lines)
+
+
+def file_jar(path: Path) -> http.cookiejar.CookieJar:
+    """Parse the youtube.com lines of a Netscape cookies.txt (blocking; worker thread only)."""
+    from yt_dlp.cookies import YoutubeDLCookieJar
+
+    lines = youtube_lines(path.read_text("utf-8", errors="replace"))
     jar = YoutubeDLCookieJar()
-    jar.load(io.StringIO("".join(kept)))
+    jar.load(io.StringIO(netscape_text(lines)))
     return youtube_only(jar)
 
 

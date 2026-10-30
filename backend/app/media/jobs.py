@@ -25,6 +25,7 @@ from pydantic import ValidationError
 from ..config import Settings
 from ..errors import AppError
 from ..models import VideoSummary
+from ..session import session_tag
 from .ffmpeg import ProcessedMedia, process_to_mp4
 from .models import JobErrorInfo, JobProgress, JobState, JobView, MediaInfo
 from .provider import MediaSourceProvider, ProgressCallback
@@ -106,8 +107,11 @@ class JobManager:
         if provider is None:
             raise AppError("invalid_input", f"Unknown media source {source!r}.")
         ref = provider.validate_ref(ref)
-        key = f"{source}:{ref}:{self.settings.profile}"
-        media_id = media_id_for(source, ref, self.settings.profile)
+        # Media prepared with someone's YouTube cookies is kept apart and only served back to them.
+        tag = session_tag()
+        profile = f"{self.settings.profile}-{tag}" if tag else self.settings.profile
+        key = f"{source}:{ref}:{profile}"
+        media_id = media_id_for(source, ref, profile)
 
         existing = self._jobs.get(self._by_key.get(key, ""))
         if existing is not None and existing.state != JobState.FAILED:

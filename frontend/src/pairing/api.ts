@@ -1,6 +1,8 @@
 import { request } from "@/api/http";
 
 export interface PairingStatus {
+  /** Accounts are on: devices are paired to the account that approves them. */
+  accounts?: boolean;
   /** This computer: never needs pairing. */
   local: boolean;
   paired: boolean;
@@ -31,6 +33,9 @@ export const pairingApi = {
   start: (name: string | null) => request<PairingRequest>(`${BASE}/requests`, { method: "POST", body: JSON.stringify({ name }) }),
   check: (id: string, signal?: AbortSignal) => request<{ state: "waiting" | "paired" | "expired" }>(`${BASE}/requests/${encodeURIComponent(id)}`, { signal }),
   approve: (code: string) => request<PairingRequest>(`${BASE}/approve`, { method: "POST", body: JSON.stringify({ code }) }),
-  devices: (signal?: AbortSignal) => request<{ devices: PairedDevice[]; requests: PairingRequest[] }>(`${BASE}/devices`, { signal }),
+  devices: (signal?: AbortSignal) =>
+    request<{ devices: PairedDevice[]; requests: PairingRequest[]; current?: string | null }>(`${BASE}/devices`, { signal }),
   revoke: (id: string) => request<{ ok: boolean }>(`${BASE}/devices/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  /** A device paired to an account signs itself out. */
+  forget: () => request<{ ok: boolean }>(`${BASE}/forget`, { method: "POST" }),
 };

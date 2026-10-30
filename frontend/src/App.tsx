@@ -8,11 +8,12 @@ import { ThemeProvider } from "@/theme/ThemeContext";
 import type { Health } from "./api/types";
 import { discoveryApi } from "./discovery/api";
 import { LibraryProvider } from "./library/LibraryContext";
-import { PairingGate } from "./pairing/PairingGate";
 import { QueueProvider } from "./queue/QueueContext";
 import { RouterProvider, useRouter } from "./router/router";
 import { isPersonalFeed } from "./account/feeds";
 import { appIdFromPath } from "./apps/registry";
+import { AuthGate } from "./auth/AuthGate";
+import { AccessView } from "./views/AccessView";
 import { AppRouteView, AppsView } from "./views/AppsView";
 import { CheckView } from "./views/CheckView";
 import { DevicesView } from "./views/DevicesView";
@@ -62,6 +63,13 @@ function HealthBanner() {
   );
 }
 
+/** Clerk's sign-in pages, reached while already signed in: go home. */
+function SignedInRedirect() {
+  const { navigate } = useRouter();
+  useEffect(() => navigate("/", { replace: true }), [navigate]);
+  return null;
+}
+
 function Routes() {
   const { path } = useRouter();
   const appId = appIdFromPath(path);
@@ -99,6 +107,11 @@ function Routes() {
       return <DirectPlayView />;
     case "/devices":
       return <DevicesView />;
+    case "/access":
+      return <AccessView />;
+    case "/sign-in":
+    case "/sign-up":
+      return <SignedInRedirect />;
     default:
       return <NotFoundView />;
   }
@@ -109,7 +122,7 @@ export function App() {
     <ThemeProvider>
       <TooltipProvider>
         <RouterProvider>
-          <PairingGate>
+          <AuthGate>
             <LibraryProvider>
               <QueueProvider>
                 <AppShell banner={<HealthBanner />}>
@@ -117,7 +130,7 @@ export function App() {
                 </AppShell>
               </QueueProvider>
             </LibraryProvider>
-          </PairingGate>
+          </AuthGate>
         </RouterProvider>
       </TooltipProvider>
     </ThemeProvider>

@@ -6,3 +6,5 @@ python-dotenv==1.2.4
 # which additionally needs an external JS runtime (Deno >= 2.3.0 recommended).
 yt-dlp[default]==2026.10.26
 yt-dlp-ejs==0.8.0
+# Accounts: Clerk session tokens (RS256) and AES-GCM for secrets stored in Convex.
+pyjwt[crypto]==2.15.1

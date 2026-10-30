@@ -8,7 +8,7 @@ Browse YouTube (search, channels, playlists) and play videos whose **frames are 
 Browsers without WebCodecs fall back to a hidden `<video>` element as the decoder.
 
 - **Backend:** Python + FastAPI, with `yt-dlp` for discovery and media acquisition and FFmpeg/ffprobe for merging and conversion.
-- **Frontend:** React + TypeScript + Vite, in a YouTube-style layout built with Tailwind CSS v4 and shadcn/ui-style components (Radix primitives, lucide icons), with dark and light themes. Favorites and history live in `localStorage`.
+- **Frontend:** React + TypeScript + Vite, in a YouTube-style layout built with Tailwind CSS v4 and shadcn/ui-style components (Radix primitives, lucide icons), with dark and light themes. Favorites and history live in `localStorage`, or in your account when [accounts](#accounts-clerk--convex) are on.
 
 ![Watch page (demo media) rendered into a canvas](docs/screenshots/desktop-watch.png)
 
@@ -311,9 +311,15 @@ Identical requests share one job; a file already in the cache yields an immediat
 | `POST /api/apps/plex/play` `{key, audio_stream?, max_bitrate_kbps?, capabilities}` | Direct play or a transcode session, chosen for this browser |
 | `GET /api/apps/plex/sessions/{id}/file`, `/sessions/{id}/dash/...` | The original file in byte ranges (at most 16 MiB), or the transcoder's manifest and segments |
 | `POST /api/apps/plex/sessions/{id}/ping`, `DELETE /api/apps/plex/sessions/{id}`, `POST /api/apps/plex/timeline` | Keep a transcode alive, stop it, report progress |
+| `GET /api/auth/config` | Whether accounts are on, and Clerk's publishable key (always open) |
+| `GET /api/auth/me` | Who is signed in (accounts on) |
+| `PUT`/`DELETE /api/me/cookies` | Upload (a Netscape cookies.txt as the body) or remove your YouTube cookies (accounts on) |
+| `GET /api/library`, `PUT /api/library/{favorites\|history\|searches}` `{entries}`, `DELETE /api/library/{list}[/{key}]` | Your library (accounts on) |
+| `GET`/`POST /api/admin/allowlist` `{emails}`, `DELETE /api/admin/allowlist/{email}` | Who may sign in (admins) |
 | `GET /api/pairing/status` | Whether this device is local, paired, or needs pairing |
 | `POST /api/pairing/requests`, `GET /api/pairing/requests/{id}` | Start pairing (returns the code) and collect the device cookie once approved |
-| `POST /api/pairing/approve` `{code}`, `GET /api/pairing/devices`, `DELETE /api/pairing/devices/{id}` | This computer only: approve a code, list paired and waiting devices, revoke |
+| `POST /api/pairing/approve` `{code}`, `GET /api/pairing/devices`, `DELETE /api/pairing/devices/{id}` | Approve a code, list paired and waiting devices, revoke: this computer only, or with accounts on, your own |
+| `POST /api/pairing/forget` | A paired device signs itself out |
 | `POST /api/jobs` `{source: "youtube"\|"demo", id}` | Create or join a preparation job (201 new, 200 existing) |
 | `GET /api/jobs/{id}` / `DELETE /api/jobs/{id}` | Job status / cancel |
 | `GET`/`HEAD /api/media/{media_id}` | Prepared MP4 with byte ranges |
@@ -324,9 +330,36 @@ Identical requests share one job; a file already in the cache yields an immediat
 
 Errors are always `{"error": {code, message, hint, retryable}}`. The codes include:
 
-`invalid_input`, `not_found`, `unavailable`, `live_unsupported`, `restricted`, `youtube_blocked`, `download_forbidden`, `rate_limited`, `js_runtime_problem`, `no_formats`, `too_large`, `too_long`, `dependency_missing`, `storage_full`, `busy`, `timeout`, `processing_failed`, `cancelled`, `signed_out`, `signin_failed`, `forbidden`, `app_disabled`, `plex_signed_out`, `plex_unreachable`, `plex_error`.
+`invalid_input`, `not_found`, `unavailable`, `live_unsupported`, `restricted`, `youtube_blocked`, `download_forbidden`, `rate_limited`, `js_runtime_problem`, `no_formats`, `too_large`, `too_long`, `dependency_missing`, `storage_full`, `busy`, `timeout`, `processing_failed`, `cancelled`, `signed_out`, `signin_failed`, `forbidden`, `app_disabled`, `plex_signed_out`, `plex_unreachable`, `plex_error`, `auth_required`, `not_invited`, `accounts_unavailable`.
 
 Raw yt-dlp and FFmpeg output stays in the backend log with URL query strings redacted.
+
+## Accounts (Clerk + Convex)
+
+With a Clerk publishable key in `.env`, yt-canvas has accounts: everyone signs in, and only people on an allowlist can. Whatever is yours follows you to any device once you're signed in:
+
+- **Your YouTube:** upload a cookies.txt once (*Your YouTube* in the account menu); yt-dlp, Home, the personal feeds and related videos use it on every device.
+- **Your Plex:** connect it once with Plex's PIN sign-in; any device you sign in on is connected.
+- **Your apps, favorites, history and continue watching**, and your recent searches.
+- **Your devices:** cars and TVs paired to your account, which you can see and revoke from any of your devices.
+
+Without the key (or with `YTC_ACCOUNTS=off`), yt-canvas runs in **no-login mode**, as described in the rest of this README: one implicit user, this computer plus paired devices, the library in `localStorage`. The tests run that way.
+
+### Setting it up
+
+1. A Clerk application (a development instance works) and a Convex deployment.
+2. In `.env`: `CLERK_PUBLISHABLE_KEY` (or `NEXT_PUBLIC_…`/`VITE_…`), `CLERK_SECRET_KEY`, `CONVEX_SITE_URL` (the `.convex.site` URL; `CONVEX_ENDPOINT` also works), `CONVEX_DEPLOY_KEY`, and two keys you generate: `YTC_SECRETS_KEY` (32 random bytes, urlsafe base64) and `YTC_CONVEX_SECRET` (any long random string). `YTC_ADMIN_EMAILS` lists the admins.
+3. Push the Convex functions and give them their environment: `cd frontend && npx convex dev --once`, then `npx convex env set` for `YTC_CONVEX_SECRET`, `CLERK_SECRET_KEY` and `CLERK_WEBHOOK_SECRET` (`scripts/deploy.py` does both).
+4. In Clerk's dashboard, point a webhook at `https://<deployment>.convex.site/clerk-webhook` for `user.created`, `user.updated` and `user.deleted`, and put its signing secret in `CLERK_WEBHOOK_SECRET`.
+
+### How it works
+
+- **One trust boundary:** the browser only talks to the yt-canvas server. The server verifies Clerk's session token on every `/api` request (RS256 against the instance's JWKS, issuer, expiry, and `azp` against `YTC_ALLOWED_ORIGINS` or the request's own host) and reads the person's email from Clerk once (cached). API calls send the token as `Authorization: Bearer`; media and posters carry Clerk's `__session` cookie. Writes signed only by a cookie must come from the same origin.
+- **Convex** (`frontend/convex/`) holds users, the allowlist, devices, library entries and secrets. Only the server reaches it, through one HTTP action (`/backend`) guarded by `YTC_CONVEX_SECRET` that runs internal functions; no client can call them.
+- **Secrets** (your YouTube cookies, your Plex token) are encrypted with AES-256-GCM using `YTC_SECRETS_KEY` before they leave the server, bound to their owner, so Convex only ever stores ciphertext. Losing the key means everyone uploads cookies and connects Plex again.
+- **YouTube cookies:** only the upload's youtube.com lines are kept. yt-dlp gets them as `<config dir>/users/<tag>/cookies.txt` (mode 0600, rewritten from Convex when missing); cookies yt-dlp refreshes are encrypted and stored again, at most every 5 minutes. Pages and media fetched with someone's cookies (personal feeds, related videos, stream sessions, prepared files) are kept per person; public searches and feeds are shared.
+- **The allowlist:** emails in Convex, managed on **Access** (`/access`, admins only). `YTC_ADMIN_EMAILS` are always allowed. Someone signed in but not listed gets 403 `not_invited`, and the Clerk webhook deletes accounts created by people who aren't listed. Removing an email locks out that person's paired devices too (within a minute).
+- **No secrets in logs:** cookie values, tokens and keys are never logged or returned by any API.
 
 ## Signing in (opt-in)
 
@@ -400,6 +433,25 @@ cd backend && YTC_IGNORE_DOTENV=1 YTC_DATA_DIR=/tmp/yt-canvas-tunnel YTC_FRONTEN
 ```bash
 cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8790
 ```
+
+### Pairing with accounts on
+
+With accounts on, a device that can't easily sign in (a car, a TV) chooses **Pair with a code instead** on the sign-in screen. On any device where you're signed in, open **Devices** from the account menu and type the code in: the device joins your account (Plex, YouTube, library) with a 400-day HttpOnly cookie whose hash is stored in your account. Devices lists your paired devices from anywhere, with Revoke; a paired device can sign itself out from the account menu, but can't pair others.
+
+## Deploying to the home lab
+
+`scripts/deploy.py` puts yt-canvas on gm-server-1-us at **https://ytc.devhomelab.app**, with accounts on:
+
+```bash
+backend/.venv/bin/python scripts/deploy.py
+```
+
+- **Convex:** pushes `frontend/convex` to the deployment in `CONVEX_DEPLOY_KEY` and sets its environment variables.
+- **Cloudflare** (`CF_ACCOUNT_API_TOKEN`): a remotely managed tunnel, `yt-canvas-public`, routes the hostname to the app container, and a proxied CNAME points the hostname at the tunnel. An existing DNS record that points elsewhere stops the deploy rather than being replaced.
+- **The server:** the code goes to `~/apps/yt-canvas` (without `.env`, cookies or build output); `deploy/.env` (the tunnel token) and `deploy/app.env` (the app's keys) are written there with mode 0600; `docker compose -f deploy/compose.yml up -d --build` builds the image (`Dockerfile`: the built frontend, the backend, FFmpeg and Deno) and starts it with its own cloudflared container. Nothing listens publicly; the app is on `127.0.0.1:3350` for health checks.
+- **Data:** the `data` volume holds the media cache (16 GB, 24 h); the `config` volume holds each person's cookies file for yt-dlp. Everything else lives in Convex.
+
+Run it again to deploy a new version; `--skip-convex` and `--skip-cloudflare` skip those steps.
 
 ## Demo / test media
 

@@ -33,6 +33,7 @@ from urllib.parse import unquote, urlsplit
 
 from ..config import Settings
 from ..cookies import CookieLoader, copy_jar
+from ..session import session_tag
 from ..errors import AppError
 from ..models import ChannelInfo, Feed, FeedInfo, FeedList, LiveStatus, RelatedVideos, Shelf, VideoSummary
 from ..validation import CHANNEL_ID_RE, HANDLE_RE, VIDEO_ID_RE, validate_video_id, watch_url
@@ -526,9 +527,12 @@ class YouTubePagesService:
 
     name = PROVIDER
 
-    def __init__(self, settings: Settings, cookies: CookieLoader | None = None) -> None:
+    def __init__(self, settings: Settings, cookies: CookieLoader | None = None,
+                 cookies_for: Callable[[], CookieLoader | None] | None = None) -> None:
         self.settings = settings
         self.cookies = cookies
+        # With accounts on: the signed-in person's cookies, looked up per request.
+        self.cookies_for = cookies_for
         self.feed_cache: TTLCache[Feed] = TTLCache(settings.metadata_cache_ttl, settings.metadata_cache_entries)
         self.related_cache: TTLCache[RelatedVideos] = TTLCache(
             settings.metadata_cache_ttl, settings.metadata_cache_entries
@@ -574,10 +578,11 @@ class YouTubePagesService:
 
     async def _session_cookies(self) -> http.cookiejar.CookieJar | None:
         """The signed-in session's jar, or ``None`` (not configured, or unreadable right now)."""
-        if self.cookies is None or not self.cookies.configured:
+        loader = self.cookies_for() if self.cookies_for is not None else self.cookies
+        if loader is None or not loader.configured:
             return None
         try:
-            return await self.cookies.jar()
+            return await loader.jar()
         except AppError as exc:
             log.warning("related videos fall back to the logged-out page: %s", exc.message)
             return None
@@ -593,5 +598,6 @@ class YouTubePagesService:
                                      "this video's watch page", cookies=cookies)
             return RelatedVideos(video_id=video_id, items=items, provider=PROVIDER)
 
-        key = ("related", video_id, cookies is not None)
+        # Personalized pages are cached per person.
+        key = ("related", video_id, (session_tag() or "signed-in") if cookies is not None else None)
         return await self.related_cache.get_or_fetch(key, load)

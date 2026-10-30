@@ -100,6 +100,10 @@ export interface Me {
   chips: string[];
   /** Why sign-in isn't working, when configured. */
   detail: string | null;
+  /** Accounts are on: each person uploads their own cookies.txt. */
+  uploads?: boolean;
+  uploaded_at?: number | null;
+  cookie_count?: number | null;
 }
 
 export interface ParsedInput {

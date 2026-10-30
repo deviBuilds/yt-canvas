@@ -47,6 +47,7 @@ from ..discovery.normalize import normalize_entry
 from ..errors import AppError, redact
 from ..models import VideoSummary
 from ..validation import validate_video_id, watch_url
+from ..session import session_tag, youtube_settings
 from ..ytdlp import base_args, run_json
 from .models import StreamAudioTrack, StreamVideoTrack, StreamView
 from .youtube import check_playable, mark_watched_args
@@ -298,7 +299,8 @@ class YouTubeStreamResolver:
         if info.get("id") != video_id:
             raise AppError("extraction_failed", "yt-dlp returned metadata for a different video.", status=502)
         check_playable(info, self.settings, check_duration=False)
-        video = normalize_entry({**info, "ie_key": "Youtube"}, signed_in=self.settings.signed_in_configured)
+        video = normalize_entry({**info, "ie_key": "Youtube"},
+                                signed_in=youtube_settings(self.settings).signed_in_configured)
 
         video_tracks, audio_tracks = select_stream_tracks(info.get("formats"),
                                                           max_height=self.settings.stream_max_height)
@@ -438,7 +440,9 @@ class StreamManager:
         if resolver is None:
             raise AppError("invalid_input", f"Unknown media source {source!r}.")
         ref = resolver.validate_ref(ref)
-        key = f"{source}:{ref}"
+        # Resolved with someone's cookies, a session is only reused for them.
+        tag = session_tag()
+        key = f"{source}:{ref}" + (f":{tag}" if tag else "")
         self.prune()
         resolved = self._resolves.get(key)
         min_left = min(MIN_REUSE_SECONDS, self.session_ttl / 2)

@@ -26,6 +26,7 @@ from ..errors import AppError
 from ..models import VideoSummary
 from ..procs import ExecutableNotFound, ProcessTimeout, run_process
 from ..validation import validate_video_id, watch_url
+from ..session import youtube_settings
 from ..ytdlp import SIGNIN_HINT, base_args, classify_error, log_failure, run_json
 from .formats import FormatChoice, select_formats
 from .models import JobProgress, JobState
@@ -71,7 +72,7 @@ def check_playable(info: dict[str, Any], settings: Settings, *, check_duration: 
                        status=422, hint="Try again later.", retryable=True)
     availability = info.get("availability")
     # Signed in, yt-dlp tries with the account instead and its error is classified if that fails.
-    if availability in RESTRICTED_AVAILABILITY and not settings.signed_in_configured:
+    if availability in RESTRICTED_AVAILABILITY and not youtube_settings(settings).signed_in_configured:
         raise AppError("restricted", "This video requires a signed-in or paying account.", status=403,
                        hint=SIGNIN_HINT)
     duration = info.get("duration")
@@ -83,7 +84,7 @@ def check_playable(info: dict[str, Any], settings: Settings, *, check_duration: 
 
 def mark_watched_args(settings: Settings) -> list[str]:
     """``--mark-watched`` for a playback extraction (YTC_MARK_WATCHED, signed in only)."""
-    if settings.mark_watched and settings.signed_in_configured:
+    if settings.mark_watched and youtube_settings(settings).signed_in_configured:
         return ["--mark-watched"]
     return []
 
@@ -116,7 +117,8 @@ class YouTubeMediaProvider:
         if info.get("id") != video_id:
             raise AppError("extraction_failed", "yt-dlp returned metadata for a different video.", status=502)
 
-        video = normalize_entry({**info, "ie_key": "Youtube"}, signed_in=self.settings.signed_in_configured)
+        video = normalize_entry({**info, "ie_key": "Youtube"},
+                                signed_in=youtube_settings(self.settings).signed_in_configured)
         if video is not None:
             ctx.set_video(video)
         check_playable(info, self.settings)

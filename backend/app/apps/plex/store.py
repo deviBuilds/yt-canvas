@@ -1,7 +1,9 @@
-"""The Plex sign-in, kept in ``<config dir>/plex.json`` (mode 0600).
+"""The Plex sign-in: in no-login mode kept in ``<config dir>/plex.json`` (mode 0600).
 
-It holds this installation's Plex client identifier, the account's token from the PIN
-sign-in, and the chosen server's address and access token. Never sent to the browser.
+It holds the Plex client identifier, the account's token from the PIN sign-in, and the
+chosen server's address and access token. Never sent to the browser. With accounts on, each
+person has their own, held in memory and saved (encrypted) to their account through
+``persist`` (see ``users.py``).
 """
 
 from __future__ import annotations
@@ -10,6 +12,7 @@ import json
 import logging
 import os
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -17,9 +20,11 @@ log = logging.getLogger(__name__)
 
 
 class PlexStore:
-    def __init__(self, directory: Path) -> None:
-        self._path = directory / "plex.json"
-        self._data: dict[str, Any] = self._load()
+    def __init__(self, directory: Path | None, *, data: dict[str, Any] | None = None,
+                 persist: Callable[[dict[str, Any]], None] | None = None) -> None:
+        self._path = directory / "plex.json" if directory is not None else None
+        self._persist = persist
+        self._data: dict[str, Any] = dict(data) if data is not None else self._load()
 
     @property
     def client_id(self) -> str:
@@ -56,6 +61,8 @@ class PlexStore:
         self._save()
 
     def _load(self) -> dict[str, Any]:
+        if self._path is None:
+            return {}
         try:
             data = json.loads(self._path.read_text("utf-8"))
             return data if isinstance(data, dict) else {}
@@ -66,6 +73,10 @@ class PlexStore:
             return {}
 
     def _save(self) -> None:
+        if self._persist is not None:
+            self._persist(dict(self._data))
+            return
+        assert self._path is not None
         self._path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         tmp = self._path.with_name(f"plex.{os.getpid()}.tmp")
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

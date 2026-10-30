@@ -1,6 +1,9 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+
+import { useAccount } from "@/auth/AccountContext";
 
 import { videoKey, type MediaRef, type VideoSummary } from "../api/types";
+import { IMPORTED_KEY, libraryApi, LibrarySync, type ListName, type RemoteEntry } from "./remote";
 import { asArray, asVideo, readJson, writeJson } from "./storage";
 
 export const FAVORITES_KEY = "ytc.favorites.v1";
@@ -84,13 +87,67 @@ function load() {
   };
 }
 
-export function LibraryProvider({ children }: { children: ReactNode }) {
-  const [favorites, setFavorites] = useState<FavoriteEntry[]>(() => load().favorites);
-  const [history, setHistory] = useState<HistoryEntry[]>(() => load().history);
-  const [searches, setSearches] = useState<SearchEntry[]>(() => load().searches);
+/** Puts this browser's own (no-login) library into the account the first time anyone signs in here. */
+async function importLocal(account: string): Promise<void> {
+  if (readJson<string | null>(IMPORTED_KEY, (v) => (typeof v === "string" ? v : null), null) !== null) return;
+  const local = load();
+  const lists: [ListName, RemoteEntry[]][] = [
+    ["favorites", local.favorites.map((f) => ({ key: videoKey(f.video), data: f, updatedAt: f.addedAt }))],
+    ["history", local.history.map((h) => ({ key: videoKey(h.video), data: h, updatedAt: h.updatedAt }))],
+    ["searches", local.searches.map((s) => ({ key: s.query.toLowerCase(), data: s, updatedAt: s.at }))],
+  ];
+  for (const [list, entries] of lists) if (entries.length > 0) await libraryApi.put(list, entries);
+  writeJson(IMPORTED_KEY, account);
+}
 
-  // Keep several tabs in sync.
+/**
+ * Favorites, history and recent searches: in this browser's localStorage in no-login mode,
+ * or the signed-in account's, kept on the server so they follow the person to any device.
+ */
+export function LibraryProvider({ children }: { children: ReactNode }) {
+  const { user } = useAccount();
+  const account = user?.email ?? null;
+  return (
+    <LibraryState key={account ?? ""} account={account}>
+      {children}
+    </LibraryState>
+  );
+}
+
+function LibraryState({ account, children }: { account: string | null; children: ReactNode }) {
+  const remote = account !== null;
+  const [favorites, setFavorites] = useState<FavoriteEntry[]>(() => (remote ? [] : load().favorites));
+  const [history, setHistory] = useState<HistoryEntry[]>(() => (remote ? [] : load().history));
+  const [searches, setSearches] = useState<SearchEntry[]>(() => (remote ? [] : load().searches));
+  const sync = useRef<LibrarySync | null>(null);
+  const favoritesRef = useRef(favorites);
+  favoritesRef.current = favorites;
+
+  // The account's library, after merging in what this browser had (once).
   useEffect(() => {
+    if (account === null) return;
+    const syncer = new LibrarySync();
+    sync.current = syncer;
+    const controller = new AbortController();
+    importLocal(account)
+      .catch(() => undefined)
+      .then(() => libraryApi.get(controller.signal))
+      .then((data) => {
+        setFavorites(asArray(data.favorites, asFavorite, MAX_FAVORITES) ?? []);
+        setHistory(asArray(data.history, asHistory, MAX_HISTORY) ?? []);
+        setSearches(asArray(data.searches, asSearch, MAX_SEARCHES) ?? []);
+      })
+      .catch(() => undefined);
+    return () => {
+      controller.abort();
+      syncer.dispose();
+      sync.current = null;
+    };
+  }, [account]);
+
+  // Keep several tabs in sync (no-login mode).
+  useEffect(() => {
+    if (remote) return;
     const onStorage = (event: StorageEvent) => {
       if (![FAVORITES_KEY, HISTORY_KEY, SEARCHES_KEY].includes(event.key ?? "")) return;
       const fresh = load();
@@ -100,22 +157,29 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, []);
+  }, [remote]);
 
-  const toggleFavorite = useCallback((video: VideoSummary) => {
-    setFavorites((current) => {
+  const toggleFavorite = useCallback(
+    (video: VideoSummary) => {
       const key = videoKey(video);
-      const next = current.some((f) => videoKey(f.video) === key)
-        ? current.filter((f) => videoKey(f.video) !== key)
-        : [{ video, addedAt: Date.now() }, ...current].slice(0, MAX_FAVORITES);
-      writeJson(FAVORITES_KEY, next);
-      return next;
-    });
-  }, []);
+      const removing = favoritesRef.current.some((f) => videoKey(f.video) === key);
+      const entry: FavoriteEntry = { video, addedAt: Date.now() };
+      setFavorites((current) => {
+        const next = removing
+          ? current.filter((f) => videoKey(f.video) !== key)
+          : [entry, ...current.filter((f) => videoKey(f.video) !== key)].slice(0, MAX_FAVORITES);
+        if (!remote) writeJson(FAVORITES_KEY, next);
+        return next;
+      });
+      if (removing) sync.current?.remove("favorites", key);
+      else sync.current?.put("favorites", { key, data: entry, updatedAt: entry.addedAt });
+    },
+    [remote],
+  );
 
-  const recordProgress = useCallback((video: VideoSummary, position: number, duration: number | null) => {
-    if (!Number.isFinite(position)) return;
-    setHistory((current) => {
+  const recordProgress = useCallback(
+    (video: VideoSummary, position: number, duration: number | null) => {
+      if (!Number.isFinite(position)) return;
       const key = videoKey(video);
       const entry: HistoryEntry = {
         video,
@@ -123,40 +187,54 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         duration: duration && Number.isFinite(duration) ? duration : null,
         updatedAt: Date.now(),
       };
-      const next = [entry, ...current.filter((h) => videoKey(h.video) !== key)].slice(0, MAX_HISTORY);
-      writeJson(HISTORY_KEY, next);
-      return next;
-    });
-  }, []);
+      setHistory((current) => {
+        const next = [entry, ...current.filter((h) => videoKey(h.video) !== key)].slice(0, MAX_HISTORY);
+        if (!remote) writeJson(HISTORY_KEY, next);
+        return next;
+      });
+      sync.current?.progress({ key, data: entry, updatedAt: entry.updatedAt });
+    },
+    [remote],
+  );
 
-  const removeFromHistory = useCallback((ref: MediaRef) => {
-    setHistory((current) => {
-      const next = current.filter((h) => videoKey(h.video) !== videoKey(ref));
-      writeJson(HISTORY_KEY, next);
-      return next;
-    });
-  }, []);
+  const removeFromHistory = useCallback(
+    (ref: MediaRef) => {
+      setHistory((current) => {
+        const next = current.filter((h) => videoKey(h.video) !== videoKey(ref));
+        if (!remote) writeJson(HISTORY_KEY, next);
+        return next;
+      });
+      sync.current?.remove("history", videoKey(ref));
+    },
+    [remote],
+  );
 
   const clearHistory = useCallback(() => {
     setHistory([]);
-    writeJson(HISTORY_KEY, []);
-  }, []);
+    if (!remote) writeJson(HISTORY_KEY, []);
+    sync.current?.clear("history");
+  }, [remote]);
 
-  const addSearch = useCallback((query: string) => {
-    const q = query.trim();
-    if (!q) return;
-    setSearches((current) => {
-      const next = [{ query: q, at: Date.now() }, ...current.filter((s) => s.query.toLowerCase() !== q.toLowerCase())]
-        .slice(0, MAX_SEARCHES);
-      writeJson(SEARCHES_KEY, next);
-      return next;
-    });
-  }, []);
+  const addSearch = useCallback(
+    (query: string) => {
+      const q = query.trim();
+      if (!q) return;
+      const entry: SearchEntry = { query: q, at: Date.now() };
+      setSearches((current) => {
+        const next = [entry, ...current.filter((s) => s.query.toLowerCase() !== q.toLowerCase())].slice(0, MAX_SEARCHES);
+        if (!remote) writeJson(SEARCHES_KEY, next);
+        return next;
+      });
+      sync.current?.put("searches", { key: q.toLowerCase(), data: entry, updatedAt: entry.at });
+    },
+    [remote],
+  );
 
   const clearSearches = useCallback(() => {
     setSearches([]);
-    writeJson(SEARCHES_KEY, []);
-  }, []);
+    if (!remote) writeJson(SEARCHES_KEY, []);
+    sync.current?.clear("searches");
+  }, [remote]);
 
   const value = useMemo<LibraryValue>(() => {
     const favoriteKeys = new Set(favorites.map((f) => videoKey(f.video)));

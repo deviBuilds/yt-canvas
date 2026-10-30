@@ -1,11 +1,16 @@
 import { useCallback } from "react";
 
-import { useCachedRequest } from "@/lib/useCachedRequest";
+import { forgetCached, useCachedRequest } from "@/lib/useCachedRequest";
 
 import type { Me } from "../api/types";
 import { accountApi } from "./api";
 
 const SIGNED_OUT: Me = { configured: false, signed_in: false, source: null, avatar_url: null, chips: [], detail: null };
+
+/** Forget the cached state (after uploading or removing cookies). */
+export function forgetMe(): void {
+  forgetCached("me");
+}
 
 /**
  * The YouTube sign-in state. ``known`` is false until the server answers, so

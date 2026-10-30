@@ -37,12 +37,39 @@ function errorInfoFrom(body: unknown, status: number): ErrorInfo {
   };
 }
 
+type TokenGetter = () => Promise<string | null>;
+let sessionToken: TokenGetter | null = null;
+
+/**
+ * With accounts on, API calls carry a fresh Clerk session token. (Media and posters rely on
+ * the session cookie Clerk keeps on this origin.)
+ */
+export function setSessionToken(getter: TokenGetter | null): void {
+  sessionToken = getter;
+}
+
+async function authorization(): Promise<Record<string, string>> {
+  if (!sessionToken) return {};
+  try {
+    const token = await sessionToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch {
+    return {};
+  }
+}
+
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response;
   try {
+    const auth = await authorization();
     response = await fetch(path, {
       ...init,
-      headers: { Accept: "application/json", ...(init.body ? { "Content-Type": "application/json" } : {}), ...init.headers },
+      headers: {
+        Accept: "application/json",
+        ...(init.body ? { "Content-Type": "application/json" } : {}),
+        ...auth,
+        ...init.headers,
+      },
     });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") throw err;

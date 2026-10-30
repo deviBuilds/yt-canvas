@@ -1,0 +1,20 @@
+# Keep secrets, cookies and local build output out of the image's build context.
+.git
+.env
+.env.*
+!.env.example
+deploy/*.env
+**/.env.local
+cookie.txt
+cookies.txt
+*.cookies.txt
+**/__pycache__
+**/*.pyc
+backend/.venv
+backend/.pytest_cache
+backend/tests
+frontend/node_modules
+frontend/dist
+frontend/test-results
+frontend/playwright-report
+docs
