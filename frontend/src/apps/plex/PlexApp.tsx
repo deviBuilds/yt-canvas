@@ -7,6 +7,7 @@ import { Link, useRouter } from "@/router/router";
 import { plexApi, plexPath, type PlexStatus } from "./api";
 import { PlexHomeView, PlexLibraryView, PlexSearchView, SearchBox } from "./Browse";
 import { Failure, Loading } from "./components";
+import { forgetLoaded, recall, remember } from "./useLoad";
 import { Connect } from "./Connect";
 import { PlexItemPage } from "./ItemPage";
 import { PlexWatch } from "./Watch";
@@ -22,21 +23,34 @@ function route(path: string): string[] {
  */
 export default function PlexApp() {
   const { path, params, navigate } = useRouter();
-  const [status, setStatus] = useState<PlexStatus | null>(null);
+  // The last status known on this page lets a connected Plex open at once; it's checked again below.
+  const [status, setStatus] = useState<PlexStatus | null>(() => recall<PlexStatus>("status"));
   const [error, setError] = useState<string | null>(null);
+
+  const changed = useCallback((next: PlexStatus) => {
+    remember("status", next);
+    setStatus(next);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
-    plexApi.status(controller.signal).then(setStatus, (err: unknown) => {
-      if (!controller.signal.aborted) setError(err instanceof Error ? err.message : String(err));
+    plexApi.status(controller.signal).then(changed, (err: unknown) => {
+      if (!controller.signal.aborted && !recall("status")) setError(err instanceof Error ? err.message : String(err));
     });
     return () => controller.abort();
-  }, []);
+  }, [changed]);
 
-  const onConnected = useCallback((next: PlexStatus) => setStatus(next), []);
+  const onConnected = useCallback(
+    (next: PlexStatus) => {
+      forgetLoaded();
+      changed(next);
+    },
+    [changed],
+  );
   const disconnect = () => {
     void plexApi.disconnect().then((next) => {
-      setStatus(next);
+      forgetLoaded();
+      changed(next);
       navigate(plexPath());
     });
   };

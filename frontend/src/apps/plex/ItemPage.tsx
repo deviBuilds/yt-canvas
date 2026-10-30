@@ -41,7 +41,7 @@ function PlayButtons({ item }: { item: PlexDetails }) {
 }
 
 export function PlexItemPage({ itemKey }: { itemKey: string }) {
-  const { data: item, error, retry } = useLoad((signal) => plexApi.item(itemKey, signal), [itemKey]);
+  const { data: item, error, retry } = useLoad((signal) => plexApi.item(itemKey, signal), [itemKey], `item:${itemKey}`);
   if (error) return <Failure message={error} onRetry={retry} />;
   if (!item) return <Loading />;
   const playable = item.type === "movie" || item.type === "episode";

@@ -33,8 +33,8 @@ export function SearchBox({ initial = "" }: { initial?: string }) {
 }
 
 export function PlexHomeView() {
-  const { data, error, retry } = useLoad((signal) => plexApi.home(signal), []);
-  const libraries = useLoad((signal) => plexApi.libraries(signal), []);
+  const { data, error, retry } = useLoad((signal) => plexApi.home(signal), [], "home");
+  const libraries = useLoad((signal) => plexApi.libraries(signal), [], "libraries");
   return (
     <>
       <div className="mt-4 flex flex-wrap gap-2">
@@ -70,11 +70,15 @@ const SORTS = [
 export function PlexLibraryView({ libraryKey }: { libraryKey: string }) {
   const [sort, setSort] = useState<string>("title");
   const [extra, setExtra] = useState<{ items: PlexItem[]; loading: boolean }>({ items: [], loading: false });
-  const libraries = useLoad((signal) => plexApi.libraries(signal), []);
-  const first = useLoad((signal) => {
-    setExtra({ items: [], loading: false });
-    return plexApi.libraryItems(libraryKey, 0, sort, signal);
-  }, [libraryKey, sort]);
+  const libraries = useLoad((signal) => plexApi.libraries(signal), [], "libraries");
+  const first = useLoad(
+    (signal) => {
+      setExtra({ items: [], loading: false });
+      return plexApi.libraryItems(libraryKey, 0, sort, signal);
+    },
+    [libraryKey, sort],
+    `library:${libraryKey}:${sort}`,
+  );
   const library = libraries.data?.find((candidate) => candidate.key === libraryKey);
   const items = [...(first.data?.items ?? []), ...extra.items];
   const more = first.data ? items.length < first.data.total : false;
@@ -115,7 +119,7 @@ export function PlexLibraryView({ libraryKey }: { libraryKey: string }) {
 }
 
 export function PlexSearchView({ q }: { q: string }) {
-  const { data, error, retry } = useLoad((signal) => plexApi.search(q, signal), [q]);
+  const { data, error, retry } = useLoad((signal) => plexApi.search(q, signal), [q], `search:${q}`);
   return (
     <>
       <h2 className="mt-6 text-2xl font-bold">Results for “{q}”</h2>
