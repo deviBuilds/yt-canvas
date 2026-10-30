@@ -6,5 +6,8 @@ python-dotenv==1.2.4
 # which additionally needs an external JS runtime (Deno >= 2.3.0 recommended).
 yt-dlp[default]==2026.10.26
 yt-dlp-ejs==0.8.0
+# A yt-dlp plugin that gets PO tokens from a bgutil server (YTC_POT_PROVIDER_URL); its major
+# version must match the server's (deploy/compose.yml).
+bgutil-ytdlp-pot-provider==2.0.2
 # Accounts: Clerk session tokens (RS256) and AES-GCM for secrets stored in Convex.
 pyjwt[crypto]==2.15.1

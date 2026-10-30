@@ -1,6 +1,6 @@
 import pytest
 
-from app.config import Settings
+from app.config import Settings, load_settings
 from app.errors import redact
 from app.media.youtube import check_playable
 from app.errors import AppError
@@ -64,6 +64,28 @@ def test_base_args_are_a_fixed_argument_array(tmp_path):
     assert "--ignore-config" in args
     assert args[args.index("--js-runtimes") + 1] == "node"
     assert all(isinstance(arg, str) for arg in args)
+    assert "--extractor-args" not in args
+
+
+def test_base_args_ask_the_po_token_server_when_there_is_one(tmp_path):
+    args = base_args(Settings(data_dir=tmp_path, pot_provider_url="http://pot:4416"))
+    assert args[args.index("--extractor-args") + 1] == "youtubepot-bgutilhttp:base_url=http://pot:4416"
+
+
+@pytest.mark.parametrize("raw, expected", [("", None), ("http://pot:4416/", "http://pot:4416"),
+                                           ("https://pot.example.com", "https://pot.example.com")])
+def test_po_token_server_setting(monkeypatch, tmp_path, raw, expected):
+    monkeypatch.setenv("YTC_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("YTC_POT_PROVIDER_URL", raw)
+    assert load_settings().pot_provider_url == expected
+
+
+@pytest.mark.parametrize("raw", ["pot:4416", "http://pot:4416;youtube:player_client=web", "ftp://pot"])
+def test_po_token_server_must_be_a_plain_http_address(monkeypatch, tmp_path, raw):
+    monkeypatch.setenv("YTC_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("YTC_POT_PROVIDER_URL", raw)
+    with pytest.raises(ValueError, match="YTC_POT_PROVIDER_URL"):
+        load_settings()
 
 
 @pytest.mark.parametrize(

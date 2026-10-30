@@ -152,6 +152,9 @@ class Settings:
     # External tools
     ytdlp_command: tuple[str, ...] = field(default_factory=lambda: (sys.executable, "-m", "yt_dlp"))
     ytdlp_js_runtimes: tuple[str, ...] = ()
+    # A bgutil PO token server (bgutil-ytdlp-pot-provider), which yt-dlp asks for tokens when
+    # YouTube wants them (as it does from datacenter IPs).
+    pot_provider_url: str | None = None
     ffmpeg_path: str = "ffmpeg"
     ffprobe_path: str = "ffprobe"
     # Features
@@ -276,6 +279,10 @@ def load_settings() -> Settings:
     runtimes_raw = os.environ.get("YTC_YTDLP_JS_RUNTIMES", "").strip()
     js_runtimes = tuple(part.strip() for part in runtimes_raw.split(",") if part.strip())
 
+    pot_url = os.environ.get("YTC_POT_PROVIDER_URL", "").strip().rstrip("/")
+    if pot_url and not re.fullmatch(r"https?://[^\s;,]+", pot_url):
+        raise ValueError(f"YTC_POT_PROVIDER_URL must be an http:// or https:// address, got {pot_url!r}")
+
     browser_raw = os.environ.get("YTC_YTDLP_COOKIES_FROM_BROWSER", "").strip()
     cookies_raw = os.environ.get("YTC_YTDLP_COOKIES_FILE", "").strip()
     # With accounts on, everyone brings their own cookies; the server-wide ones are left alone.
@@ -317,6 +324,7 @@ def load_settings() -> Settings:
         cleanup_interval_seconds=_int("YTC_CLEANUP_INTERVAL_SECONDS", 300, minimum=10),
         ytdlp_command=ytdlp_command,
         ytdlp_js_runtimes=js_runtimes,
+        pot_provider_url=pot_url or None,
         ffmpeg_path=_str("YTC_FFMPEG_PATH", "ffmpeg"),
         ffprobe_path=_str("YTC_FFPROBE_PATH", "ffprobe"),
         enable_demo=_bool("YTC_ENABLE_DEMO", True),

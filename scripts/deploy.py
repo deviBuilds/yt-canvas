@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deploy yt-canvas to the home lab (gm-server-1-us) at https://ytc.devhomelab.app.
+"""Deploy yt-canvas to its server (ungate@5.75.169.86) at https://yt.devhomelab.app.
 
 Run from the repository root with the backend's Python (it has python-dotenv):
 
@@ -9,9 +9,10 @@ Run from the repository root with the backend's Python (it has python-dotenv):
 Each step is safe to repeat:
 1. Convex: push frontend/convex to the deployment in CONVEX_DEPLOY_KEY and set its env vars.
 2. Cloudflare (CF_ACCOUNT_API_TOKEN): a remotely managed tunnel, yt-canvas-public, whose
-   ingress sends the hostname to the app container, and a proxied CNAME for the hostname.
+   ingress sends the hostnames to the app container, and a proxied CNAME for each hostname.
+   ytc.devhomelab.app, where the app ran first (on gm-server-1-us), still leads to it.
    An existing DNS record that points anywhere else is left alone and the deploy stops.
-3. The server: the code is copied to ~/apps/yt-canvas (no .env, cookies, or build output),
+3. The server: the code (the checkout, or --source) is copied to ~/apps/yt-canvas (no .env, cookies, or build output),
    deploy/.env (TUNNEL_TOKEN) and deploy/app.env (the app's keys) are written with mode 0600,
    and docker compose builds and starts the app and its tunnel.
 4. Checks: the app's health on the server, then the public URL.
@@ -26,6 +27,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -36,9 +38,13 @@ from pathlib import Path
 from dotenv import dotenv_values
 
 ROOT = Path(__file__).resolve().parents[1]
-HOST = "gm-server-1-us"
+HOST = "ungate@5.75.169.86"
+# The server isn't in ~/.ssh/config; it takes its own key.
+SSH_OPTIONS = ["-i", str(Path("~/.ssh/ssh-key-ungate.key").expanduser()), "-o", "IdentitiesOnly=yes",
+               "-o", "BatchMode=yes"]
 REMOTE_DIR = "apps/yt-canvas"
-HOSTNAME = "ytc.devhomelab.app"
+HOSTNAME = "yt.devhomelab.app"
+HOSTNAMES = (HOSTNAME, "ytc.devhomelab.app")  # the first is the app's address; the rest still lead to it
 ZONE = "devhomelab.app"
 TUNNEL = "yt-canvas-public"
 SERVICE = "http://app:8000"
@@ -58,7 +64,8 @@ APP_ENV = [
 ]
 # The server's own settings, not secret. .env's values for these are this computer's, so they
 # aren't copied; change them here.
-SERVER_SETTINGS = {"YTC_CACHE_MAX_MB": "16384", "YTC_CACHE_TTL_HOURS": "24", "YTC_LOG_LEVEL": "INFO"}
+SERVER_SETTINGS = {"YTC_CACHE_MAX_MB": "8192", "YTC_CACHE_TTL_HOURS": "24", "YTC_LOG_LEVEL": "INFO",
+                   "YTC_ALLOWED_ORIGINS": ",".join(f"https://{name}" for name in HOSTNAMES)}
 CONVEX_ENV = ["YTC_CONVEX_SECRET", "CLERK_WEBHOOK_SECRET", "CLERK_SECRET_KEY"]
 
 RSYNC_EXCLUDES = [
@@ -115,28 +122,28 @@ class Cloudflare:
 
     def configure(self, tunnel_id: str) -> None:
         self.call("PUT", f"/accounts/{self.account}/cfd_tunnel/{tunnel_id}/configurations", {"config": {"ingress": [
-            {"hostname": HOSTNAME, "service": SERVICE, "originRequest": {}},
+            *({"hostname": name, "service": SERVICE, "originRequest": {}} for name in HOSTNAMES),
             {"service": "http_status:404"},
         ]}})
-        print(f"tunnel ingress: {HOSTNAME} -> {SERVICE}")
+        print(f"tunnel ingress: {', '.join(HOSTNAMES)} -> {SERVICE}")
 
-    def dns(self, tunnel_id: str) -> None:
+    def dns(self, tunnel_id: str, hostname: str) -> None:
         zones = self.call("GET", f"/zones?name={ZONE}")
         if not zones:
             fail(f"the token can't see the {ZONE} zone")
         zone = zones[0]["id"]
         target = f"{tunnel_id}.cfargotunnel.com"
-        records = self.call("GET", f"/zones/{zone}/dns_records?name={HOSTNAME}")
+        records = self.call("GET", f"/zones/{zone}/dns_records?name={hostname}")
         if records:
             record = records[0]
             if record["type"] == "CNAME" and record["content"] == target:
-                print(f"DNS {HOSTNAME} already points at the tunnel")
+                print(f"DNS {hostname} already points at the tunnel")
                 return
-            fail(f"{HOSTNAME} already has a {record['type']} record pointing at {record['content']}; "
+            fail(f"{hostname} already has a {record['type']} record pointing at {record['content']}; "
                  "remove it in Cloudflare if it's unused, then deploy again")
-        self.call("POST", f"/zones/{zone}/dns_records", {"type": "CNAME", "name": HOSTNAME, "content": target,
+        self.call("POST", f"/zones/{zone}/dns_records", {"type": "CNAME", "name": hostname, "content": target,
                                                           "proxied": True, "comment": "yt-canvas tunnel"})
-        print(f"DNS {HOSTNAME} -> {target} (proxied)")
+        print(f"DNS {hostname} -> {target} (proxied)")
 
     def token_for(self, tunnel_id: str) -> str:
         return self.call("GET", f"/accounts/{self.account}/cfd_tunnel/{tunnel_id}/token")
@@ -146,7 +153,7 @@ class Cloudflare:
 
 
 def ssh(command: str, *, stdin: str | None = None, check: bool = True, capture: bool = False) -> subprocess.CompletedProcess:
-    return subprocess.run(["ssh", "-o", "BatchMode=yes", HOST, command], input=stdin, text=True, check=check,
+    return subprocess.run(["ssh", *SSH_OPTIONS, HOST, command], input=stdin, text=True, check=check,
                           capture_output=capture)
 
 
@@ -186,6 +193,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--skip-convex", action="store_true", help="don't push Convex functions or env vars")
     parser.add_argument("--skip-cloudflare", action="store_true", help="reuse the tunnel token already on the server")
+    parser.add_argument("--source", type=Path, default=ROOT,
+                        help="copy this directory instead of the checkout (say, an export of the last commit)")
     args = parser.parse_args()
     env = dotenv_values(ROOT / ".env")
 
@@ -214,7 +223,7 @@ def main() -> None:
 
     tunnel_token = None
     if not args.skip_cloudflare:
-        step(f"Cloudflare: tunnel {TUNNEL} and DNS for {HOSTNAME}")
+        step(f"Cloudflare: tunnel {TUNNEL} and DNS for {', '.join(HOSTNAMES)}")
         token = env.get("CF_ACCOUNT_API_TOKEN")
         account = env.get("CF_ACCOUNT_ID") or re.sub(r"^https://([^.]+)\..*$", r"\1", env.get("CF_R2_ENDPOINT") or "")
         if not token or not re.fullmatch(r"[0-9a-f]{32}", account or ""):
@@ -222,13 +231,15 @@ def main() -> None:
         cloudflare = Cloudflare(token, account)
         tunnel_id = cloudflare.tunnel()
         cloudflare.configure(tunnel_id)
-        cloudflare.dns(tunnel_id)
+        for name in HOSTNAMES:
+            cloudflare.dns(tunnel_id, name)
         tunnel_token = cloudflare.token_for(tunnel_id)
 
-    step(f"Copy the code to {HOST}:~/{REMOTE_DIR}")
+    step(f"Copy {args.source} to {HOST}:~/{REMOTE_DIR}")
     ssh(f"mkdir -p {REMOTE_DIR}")
-    subprocess.run(["rsync", "-az", "--delete", *[f"--exclude={pattern}" for pattern in RSYNC_EXCLUDES],
-                    f"{ROOT}/", f"{HOST}:{REMOTE_DIR}/"], check=True)
+    subprocess.run(["rsync", "-az", "--delete", "-e", shlex.join(["ssh", *SSH_OPTIONS]),
+                    *[f"--exclude={pattern}" for pattern in RSYNC_EXCLUDES],
+                    f"{args.source.resolve()}/", f"{HOST}:{REMOTE_DIR}/"], check=True)
 
     step("Write deploy/.env and deploy/app.env (mode 0600)")
     if tunnel_token:

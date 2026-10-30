@@ -1,10 +1,10 @@
-# yt-canvas on the home lab: the app and a dedicated Cloudflare Tunnel that carries
-# https://ytc.devhomelab.app to it. Nothing listens publicly; the app is published on
-# localhost only, for health checks.
+# yt-canvas on its server: the app and a dedicated Cloudflare Tunnel that carries
+# https://yt.devhomelab.app (and the older ytc.devhomelab.app) to it. Nothing listens
+# publicly; the app is published on localhost only, for health checks.
 #
 # Written next to this file by scripts/deploy.py (mode 0600, never committed):
 #   .env      TUNNEL_TOKEN, for the tunnel
-#   app.env   the app's accounts keys and settings
+#   app.env   the app's accounts keys and settings, YTC_ALLOWED_ORIGINS among them
 #   docker compose -f deploy/compose.yml up -d --build
 name: yt-canvas
 
@@ -16,14 +16,23 @@ services:
     restart: unless-stopped
     env_file: app.env
     environment:
-      YTC_ALLOWED_ORIGINS: https://ytc.devhomelab.app
+      YTC_POT_PROVIDER_URL: http://pot:4416
+    depends_on:
+      - pot
     volumes:
       - data:/data
       - config:/config
     ports:
       - "127.0.0.1:3350:8000"
 
-  # Same pinned cloudflared image as the other tunnels on this host.
+  # PO tokens for yt-dlp, which YouTube asks for from datacenter IPs like this server's. Only the
+  # app reaches it, on this project's network. Its major version matches the bgutil plugin's in
+  # backend/requirements.txt.
+  pot:
+    image: brainicism/bgutil-ytdlp-pot-provider:2.0.2@sha256:d7d34108b76e52c7d3b575fe9e797e4bf41c1b2a08f80c5292eff6f851ce8472
+    restart: unless-stopped
+
+  # cloudflared, pinned.
   tunnel:
     image: cloudflare/cloudflared@sha256:9b49eed8f62806d5d45ddf59ecefb5710429598ea6d3fcccd2af938f621b2b07
     restart: unless-stopped

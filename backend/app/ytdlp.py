@@ -38,6 +38,9 @@ def base_args(settings: Settings, *, personal: bool = True) -> list[str]:
     ]
     for runtime in settings.ytdlp_js_runtimes:
         args += ["--js-runtimes", runtime]
+    if settings.pot_provider_url:
+        # Read by the bgutil plugin (bgutil-ytdlp-pot-provider in requirements.txt).
+        args += ["--extractor-args", f"youtubepot-bgutilhttp:base_url={settings.pot_provider_url}"]
     # Opt-in sign-in. yt-dlp reads the cookies itself on every run; with --cookies it also
     # writes the (possibly refreshed) jar back to that file when it exits.
     spec = cookies.browser_spec
@@ -90,7 +93,8 @@ _ERROR_RULES: list[tuple[re.Pattern[str], str, int, str, str | None, bool]] = [
         "youtube_blocked",
         503,
         "YouTube is asking this server to prove it isn't a bot.",
-        "YouTube is rate-limiting or blocking this server's network. Try again later or from another network.",
+        "YouTube is blocking this server's network. Add your YouTube cookies (Your YouTube in the account "
+        "menu, or Signing in in the README); servers in datacenters can't play videos without them.",
         True,
     ),
     (
