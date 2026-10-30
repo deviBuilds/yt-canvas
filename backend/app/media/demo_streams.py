@@ -28,7 +28,7 @@ from pathlib import Path
 from ..config import Settings
 from ..errors import AppError
 from ..procs import ExecutableNotFound, ProcessTimeout, run_process
-from .demo import FRAME_RATE, SAMPLES, DemoSample, demo_summary, lavfi_inputs, video_graph
+from .demo import SAMPLES, DemoSample, demo_summary, lavfi_inputs, video_graph
 from .models import StreamAudioTrack, StreamVideoTrack
 from .mp4 import codec_string, read_sidx, top_level_boxes
 from .streams import ResolvedStream, Track
@@ -45,7 +45,7 @@ _TIMEOUT = 120
 
 def stream_generator_args(settings: Settings, sample: DemoSample, video_out: str, audio_out: str, *,
                           with_label: bool) -> list[str]:
-    gop = str(FRAME_RATE)  # one keyframe (and so one fragment) per second
+    gop = str(sample.frame_rate)  # one keyframe (and so one fragment) per second
     duration = str(sample.duration)
     return [
         settings.ffmpeg_path, "-hide_banner", "-nostdin", "-y", "-loglevel", "error",
@@ -99,7 +99,7 @@ class DemoStreamResolver:
         duration = float(sample.duration)  # nominal, for bitrates
         video = StreamVideoTrack(
             id=VIDEO_TRACK_ID, mime_type="video/mp4", codecs=files.video_codecs,
-            width=sample.width, height=sample.height, fps=FRAME_RATE,
+            width=sample.width, height=sample.height, fps=sample.frame_rate,
             bitrate=int(video_size * 8 / duration), size_bytes=video_size,
         )
         audio = StreamAudioTrack(id=AUDIO_TRACK_ID, mime_type="audio/mp4", codecs=files.audio_codecs,

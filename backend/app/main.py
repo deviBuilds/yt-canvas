@@ -8,9 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import ipaddress
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -19,15 +18,20 @@ from fastapi.responses import FileResponse, JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .api import router
+from .apps import AppRegistry, AppSpec, default_apps
 from .config import Settings, load_settings
 from .cookies import CookieLoader
 from .deps import detect_dependencies
+from .devices import DEVICE_COOKIE, DeviceStore, cookie_value
+from .diagnostics import BrowserReports
 from .discovery.account import AccountService
 from .discovery.provider import DiscoveryProvider
 from .discovery.service import DiscoveryService
 from .discovery.youtube_pages import YouTubePagesService
 from .discovery.ytdlp_provider import YtDlpDiscoveryProvider
 from .errors import AppError
+from .localnet import is_local_host_header, is_loopback_ip
+from .pairing import router as pairing_router
 from .media.demo import DemoMediaProvider
 from .media.demo_streams import DemoStreamResolver
 from .media.jobs import JobManager, Processor
@@ -46,40 +50,21 @@ _CSP = (
 )
 
 
-def _is_loopback_ip(host: str | None) -> bool:
-    if not host:
-        return False
-    try:
-        ip = ipaddress.ip_address(host.strip("[]"))
-    except ValueError:
-        return False
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
-    return ip.is_loopback
-
-
-def _is_local_host_header(value: str | None) -> bool:
-    """``Host`` names this computer: localhost, *.localhost or a loopback address (any port)."""
-    if not value:
-        return True  # HTTP/1.0 clients may omit it; the client address check still applies
-    host = value.strip().lower()
-    if host.startswith("["):
-        host = host[1:host.find("]")] if "]" in host else host
-    elif host.count(":") == 1:
-        host = host.split(":", 1)[0]
-    return host == "localhost" or host.endswith(".localhost") or _is_loopback_ip(host)
-
-
 class LoopbackGuard:
-    """While a signed-in YouTube session is configured, ``/api`` only answers this computer.
+    """While the server holds private data, ``/api`` only answers this computer.
 
+    Private data means a signed-in YouTube session or a connected app (such as Plex);
+    ``reason`` says which, per request, or returns None when anyone may use the API.
+    ``allow`` lets a request through anyway: a paired device's, or one to the pairing routes.
     Requests must come from a loopback address and name a local host in ``Host`` (which
     also stops DNS-rebinding pages from reaching the API through the user's browser).
     Plain ASGI so media streaming isn't wrapped by BaseHTTPMiddleware.
     """
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, reason: Callable[[], AppError | None], allow: Callable[[Scope], bool]) -> None:
         self.app = app
+        self.reason = reason
+        self.allow = allow
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http":
@@ -88,15 +73,9 @@ class LoopbackGuard:
                 client = scope.get("client")
                 headers = dict(scope.get("headers") or [])
                 host_header = headers.get(b"host", b"").decode("latin-1") or None
-                if not (_is_loopback_ip(client[0] if client else None) and _is_local_host_header(host_header)):
-                    error = AppError(
-                        "forbidden",
-                        "This server is using a signed-in YouTube session, so it only answers requests from "
-                        "this computer.",
-                        status=403,
-                        hint="Open the app on the computer running the server (http://localhost:...), or turn "
-                             "sign-in off to use it from other devices.",
-                    )
+                local = is_loopback_ip(client[0] if client else None) and is_local_host_header(host_header)
+                error = None if local else self.reason()
+                if error is not None and not self.allow(scope):
                     response = JSONResponse(status_code=403, content={"error": error.to_dict()})
                     await response(scope, receive, send)
                     return
@@ -134,6 +113,7 @@ def create_app(
     discovery_provider: DiscoveryProvider | None = None,
     media_providers: dict[str, MediaSourceProvider] | None = None,
     processor: Processor | None = None,
+    apps: list[AppSpec] | None = None,
 ) -> FastAPI:
     settings = settings or load_settings()
     logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -173,8 +153,40 @@ def create_app(
     app.state.cookies = cookies
     app.state.feeds = YouTubePagesService(settings, cookies)
     app.state.account = AccountService(settings, cookies)
-    if settings.signed_in_configured:
-        app.add_middleware(LoopbackGuard)
+    app.state.browser_reports = BrowserReports()
+    registry = AppRegistry(settings, default_apps(settings) if apps is None else apps)
+    app.state.apps = registry
+
+    def private_data() -> AppError | None:
+        if settings.signed_in_configured:
+            return AppError(
+                "forbidden",
+                "This server is using a signed-in YouTube session, so it only answers requests from this computer.",
+                status=403,
+                hint="Open the app on the computer running the server (http://localhost:...), or turn "
+                     "sign-in off to use it from other devices.",
+            )
+        if registry.private_data_active():
+            return AppError(
+                "forbidden",
+                "This server has an app connected to private data (such as a Plex library), so it only answers "
+                "requests from this computer.",
+                status=403,
+                hint="Pair this device: open this site on it and choose Pair this device.",
+            )
+        return None
+
+    devices = DeviceStore(settings.app_config_dir)
+    app.state.devices = devices
+    app.state.private_data = private_data
+
+    def allowed(scope: Scope) -> bool:
+        if scope.get("path", "").startswith("/api/pairing/"):
+            return True
+        cookies = dict(scope.get("headers") or []).get(b"cookie", b"").decode("latin-1")
+        return devices.device_for(cookie_value(cookies, DEVICE_COOKIE)) is not None
+
+    app.add_middleware(LoopbackGuard, reason=private_data, allow=allowed)
 
     @app.exception_handler(AppError)
     async def app_error_handler(_: Request, exc: AppError) -> JSONResponse:
@@ -188,6 +200,8 @@ def create_app(
         return JSONResponse(status_code=400, content={"error": error.to_dict()})
 
     app.include_router(router)
+    app.include_router(pairing_router)
+    registry.mount(app)
 
     @app.api_route("/api/{rest:path}", methods=["GET", "POST", "PUT", "DELETE", "HEAD"], include_in_schema=False)
     async def api_not_found(rest: str) -> JSONResponse:

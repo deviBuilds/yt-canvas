@@ -8,9 +8,15 @@ import { ThemeProvider } from "@/theme/ThemeContext";
 import type { Health } from "./api/types";
 import { discoveryApi } from "./discovery/api";
 import { LibraryProvider } from "./library/LibraryContext";
+import { PairingGate } from "./pairing/PairingGate";
 import { QueueProvider } from "./queue/QueueContext";
 import { RouterProvider, useRouter } from "./router/router";
 import { isPersonalFeed } from "./account/feeds";
+import { appIdFromPath } from "./apps/registry";
+import { AppRouteView, AppsView } from "./views/AppsView";
+import { CheckView } from "./views/CheckView";
+import { DevicesView } from "./views/DevicesView";
+import { DirectPlayView } from "./views/DirectPlayView";
 import { DemoView } from "./views/DemoView";
 import { FeedView } from "./views/FeedView";
 import { HomeView } from "./views/HomeView";
@@ -58,6 +64,8 @@ function HealthBanner() {
 
 function Routes() {
   const { path } = useRouter();
+  const appId = appIdFromPath(path);
+  if (appId) return <AppRouteView id={appId} />;
   if (path.startsWith("/feed/")) {
     const id = decodeURIComponent(path.slice("/feed/".length));
     return isPersonalFeed(id) ? <PersonalFeedView id={id} /> : <FeedView id={id} />;
@@ -83,6 +91,14 @@ function Routes() {
       return <DemoView />;
     case "/signin":
       return <SignInView />;
+    case "/check":
+      return <CheckView />;
+    case "/apps":
+      return <AppsView />;
+    case "/play":
+      return <DirectPlayView />;
+    case "/devices":
+      return <DevicesView />;
     default:
       return <NotFoundView />;
   }
@@ -93,13 +109,15 @@ export function App() {
     <ThemeProvider>
       <TooltipProvider>
         <RouterProvider>
-          <LibraryProvider>
-            <QueueProvider>
-              <AppShell banner={<HealthBanner />}>
-                <Routes />
-              </AppShell>
-            </QueueProvider>
-          </LibraryProvider>
+          <PairingGate>
+            <LibraryProvider>
+              <QueueProvider>
+                <AppShell banner={<HealthBanner />}>
+                  <Routes />
+                </AppShell>
+              </QueueProvider>
+            </LibraryProvider>
+          </PairingGate>
         </RouterProvider>
       </TooltipProvider>
     </ThemeProvider>

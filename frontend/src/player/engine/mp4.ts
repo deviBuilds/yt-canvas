@@ -9,6 +9,8 @@
  *    YouTube's DASH tracks and the demo streaming tracks.
  */
 
+import { aacCodec, av1Codec, avcCodec, hevcCodec, vp9Codec, vpcCCodec } from "./codecs";
+
 export interface Box {
   type: string;
   /** Offset of the box header within the buffer being read. */
@@ -58,7 +60,7 @@ export interface MovieTrack {
   id: number;
   handler: string;
   timescale: number;
-  /** Null when the sample entry is something WebCodecs isn't given (e.g. HEVC, encrypted). */
+  /** Null when the sample entry is something WebCodecs isn't given (e.g. encrypted). */
   config: TrackConfig | null;
   /** Seconds added to media times to get presentation times (from the edit list). */
   shift: number;
@@ -146,22 +148,6 @@ const hex = (n: number) => n.toString(16).toUpperCase().padStart(2, "0");
 
 // -- codec configuration ---------------------------------------------------------
 
-function avcCodec(type: string, avcC: Uint8Array): string {
-  if (avcC.length < 4) throw new Mp4Error("truncated avcC");
-  return `${type}.${hex(avcC[1]!)}${hex(avcC[2]!)}${hex(avcC[3]!)}`;
-}
-
-function av1Codec(av1C: Uint8Array): string {
-  if (av1C.length < 4) throw new Mp4Error("truncated av1C");
-  const profile = av1C[1]! >> 5;
-  const level = av1C[1]! & 0x1f;
-  const tier = av1C[2]! >> 7 ? "H" : "M";
-  const highBitDepth = (av1C[2]! >> 6) & 1;
-  const twelveBit = (av1C[2]! >> 5) & 1;
-  const depth = highBitDepth ? (twelveBit ? 12 : 10) : 8;
-  return `av01.${profile}.${String(level).padStart(2, "0")}${tier}.${String(depth).padStart(2, "0")}`;
-}
-
 /** Read an MPEG-4 descriptor header (tag + variable-length size). */
 function descriptor(bytes: Uint8Array, at: number): { tag: number; size: number; body: number } | null {
   if (at >= bytes.length) return null;
@@ -191,11 +177,7 @@ function esdsConfig(esds: Uint8Array): { codec: string; description?: Uint8Array
   const objectType = esds[dc.body]!;
   const dsi = descriptor(esds, dc.body + 13);
   const asc = dsi && dsi.tag === 0x05 ? esds.slice(dsi.body, dsi.body + dsi.size) : undefined;
-  if (objectType === 0x40 || objectType === 0x66 || objectType === 0x67) {
-    let aot = asc && asc.length > 0 ? asc[0]! >> 3 : 2;
-    if (aot === 31 && asc && asc.length > 1) aot = 32 + (((asc[0]! & 7) << 3) | (asc[1]! >> 5));
-    return { codec: `mp4a.40.${aot}`, description: asc };
-  }
+  if (objectType === 0x40 || objectType === 0x66 || objectType === 0x67) return { codec: aacCodec(asc), description: asc };
   if (objectType === 0x69 || objectType === 0x6b) return { codec: "mp3" };
   return { codec: `mp4a.${hex(objectType)}` };
 }
@@ -216,11 +198,21 @@ function sampleEntryConfig(view: DataView, stsd: Box, handler: string): TrackCon
       const description = payload(view, avcC);
       return { kind: "video", codec: avcCodec(entry.type, description), description, width, height };
     }
+    if (entry.type === "hvc1" || entry.type === "hev1") {
+      const hvcC = find("hvcC");
+      if (!hvcC) return null;
+      const description = payload(view, hvcC);
+      return { kind: "video", codec: hevcCodec(entry.type, description), description, width, height };
+    }
     if (entry.type === "av01") {
       const av1C = find("av1C");
       if (!av1C) return null;
       const description = payload(view, av1C);
       return { kind: "video", codec: av1Codec(description), description, width, height };
+    }
+    if (entry.type === "vp09") {
+      const vpcC = find("vpcC");
+      return { kind: "video", codec: vpcC ? vpcCCodec(payload(view, vpcC)) : vp9Codec(), width, height };
     }
     return null;
   }

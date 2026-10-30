@@ -1,4 +1,4 @@
-import { CircleUserRound, Compass, Heart, History, Library, LogIn, Menu, UserRound, type LucideIcon } from "lucide-react";
+import { Blocks, CircleUserRound, Compass, Heart, History, Library, LogIn, Menu, UserRound, type LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { PERSONAL_FEEDS, personalFeedPath } from "@/account/feeds";
 import { useMe } from "@/account/useMe";
+import { APP_MODULES, appPath } from "@/apps/registry";
+import { useApps } from "@/apps/store";
 import { ChannelAvatar } from "@/components/ui/avatar";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { Tip } from "@/components/ui/tooltip";
@@ -106,7 +108,8 @@ function AccountMenu() {
 }
 
 function isActive(path: string, to: string) {
-  return to === "/" ? path === "/" : path === to || path.startsWith(`${to}/`);
+  // "/apps" lists the apps; each app has its own entry for /apps/<id>.
+  return to === "/" || to === "/apps" ? path === to : path === to || path.startsWith(`${to}/`);
 }
 
 function GuideEntry({ to, icon: Icon, label, onNavigate }: { to: string; icon: LucideIcon | "home"; label: string; onNavigate?: () => void }) {
@@ -145,6 +148,7 @@ function GuideSection({ title, children }: { title?: string; children: ReactNode
 function Guide({ onNavigate }: { onNavigate?: () => void }) {
   const { feeds } = useEnabledFeeds();
   const { me, known } = useMe();
+  const apps = useApps();
   const personal = (id: keyof typeof PERSONAL_FEEDS) => (
     <GuideEntry to={personalFeedPath(id)} icon={PERSONAL_FEEDS[id].icon} label={PERSONAL_FEEDS[id].title} onNavigate={onNavigate} />
   );
@@ -177,6 +181,14 @@ function Guide({ onNavigate }: { onNavigate?: () => void }) {
               <CircleUserRound /> Sign in
             </Link>
           </Button>
+        </GuideSection>
+      ) : null}
+      {apps.listing?.available ? (
+        <GuideSection title="Apps">
+          {apps.enabled.map((app) => (
+            <GuideEntry key={app.id} to={appPath(app.id)} icon={APP_MODULES[app.id]?.icon ?? Blocks} label={app.name} onNavigate={onNavigate} />
+          ))}
+          <GuideEntry to="/apps" icon={Blocks} label={apps.enabled.length > 0 ? "Manage apps" : "Add apps"} onNavigate={onNavigate} />
         </GuideSection>
       ) : null}
       {feeds.length > 0 ? (

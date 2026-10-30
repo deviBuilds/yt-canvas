@@ -169,6 +169,13 @@ class Settings:
     cookies_from_browser: str | None = None
     cookies_file: Path | None = None
     mark_watched: bool = False  # add prepared videos to the account's watch history
+    # Add-on apps (Plex, ...): which are on, and later their sign-ins. Kept apart from the
+    # media cache, which the OS may clear. None means <data dir>/config, as in tests.
+    config_dir: Path | None = None
+    enable_apps: bool = True
+    # Plex sign-in: plex.tv's API and the page where people approve a sign-in (overridable for tests).
+    plex_tv_url: str = "https://plex.tv"
+    plex_auth_url: str = "https://app.plex.tv/auth"
 
     def __post_init__(self) -> None:
         if self.cookies_from_browser is not None:
@@ -209,6 +216,10 @@ class Settings:
     def streams_dir(self) -> Path:
         """Locally generated demo streaming tracks (YouTube streams never touch the disk)."""
         return self.data_dir / "streams"
+
+    @property
+    def app_config_dir(self) -> Path:
+        return self.config_dir or self.data_dir / "config"
 
     @property
     def profile(self) -> str:
@@ -276,4 +287,8 @@ def load_settings() -> Settings:
         cookies_from_browser=browser_raw or None,
         cookies_file=cookies_file,
         mark_watched=_bool("YTC_MARK_WATCHED", False),
+        config_dir=Path(_str("YTC_CONFIG_DIR", str(Path.home() / ".config" / "yt-canvas"))).expanduser(),
+        enable_apps=_bool("YTC_ENABLE_APPS", True),
+        plex_tv_url=_str("YTC_PLEX_TV_URL", "https://plex.tv").rstrip("/"),
+        plex_auth_url=_str("YTC_PLEX_AUTH_URL", "https://app.plex.tv/auth"),
     )

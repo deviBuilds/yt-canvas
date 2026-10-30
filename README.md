@@ -236,12 +236,14 @@ Identical requests share one job; a file already in the cache yields an immediat
 ### Canvas playback (`frontend/src/player`)
 
 **Engine** (`player/engine`): the page has no media element.
-- **Demuxing** (`mp4.ts`, our own parser):
-  - `moov` gives the codec configuration WebCodecs needs (`avcC`, `av1C`, the AAC `esds`) and the edit lists.
-  - The samples come from `moof`/`trun` fragments (DASH tracks) or from the `stbl` sample tables (the prepared MP4).
-- **Reading** (`readers.ts`):
+- **Demuxing** (our own parsers):
+  - `mp4.ts`: `moov` gives the codec configuration WebCodecs needs (`avcC`, `hvcC`, `av1C`, `vpcC`, the AAC `esds`) and the edit lists. The samples come from `moof`/`trun` fragments (DASH tracks) or from the `stbl` sample tables (the prepared MP4).
+  - `mkv.ts` (Matroska and WebM): EBML, SeekHead, Info, Tracks, Cues, and SimpleBlocks and BlockGroups in Clusters, with Xiph, EBML and fixed lacing, header stripping, unknown sizes and Opus codec delay. Video: H.264, HEVC, AV1, VP9, VP8. Audio: AAC, Opus, Vorbis, FLAC, MP3, AC-3, E-AC-3, PCM. DTS, TrueHD and image subtitles are recognized but can't be given to WebCodecs.
+  - `codecs.ts` builds the codec strings for both.
+- **Reading** (`readers.ts`, `mkvReader.ts`):
   - DASH tracks are read segment by segment through the stream proxy.
   - A prepared file is read in GOP-sized windows with HTTP ranges, one request shared by both tracks.
+  - A Matroska or WebM file is read the same way: the head, the Cues, then windows of about 4 MB as playback reaches them, never the whole file. Windows are split at the key frame each cue points to (clusters needn't start on one), so each window decodes on its own after a seek and no frame is read twice. Files without Cues are read in byte windows whose times are estimated from their position. `/play?demo=bars` (H.264/AAC in Matroska) and `/play?demo=sweep` (VP9/Opus in WebM) play a demo clip's original file this way.
 - **Decoding** (`CanvasEngine.ts`):
   - `VideoDecoder` produces `VideoFrame`s. At most 6 wait to be shown, and every frame is closed when it is replaced.
   - `AudioDecoder` produces PCM, scheduled as `AudioBuffer`s on an `AudioContext`.
@@ -249,7 +251,7 @@ Identical requests share one job; a file already in the cache yields an immediat
 - **Buffering:** if decoded audio or video runs out, playback waits (`waiting`) and resumes once enough is decoded.
 - **Seeking:** decoding restarts at the key frame before the target, and frames before the target are dropped.
 - **Media-element interface:** the engine exposes `currentTime`, `play()`/`pause()`, volume, `playbackRate`, `buffered`, media events and `requestVideoFrameCallback`, so the controls and renderer work unchanged.
-- **Choosing the engine:** WebCodecs is used when the browser decodes H.264 and AAC with it (Chromium, Edge, recent Safari, desktop Firefox). Otherwise the hidden-video path below is used, and `?engine=element` forces it.
+- **Choosing the engine:** WebCodecs is used when the browser decodes H.264 and AAC with it (Chromium, Edge, recent Safari, desktop Firefox). Otherwise the hidden-video path below is used, and `?engine=element` forces it. The engine also probes HEVC, AV1, VP9, MP3, Opus and FLAC, and sources only pick tracks it can decode.
 - **Known limitation:** playback speeds other than 1× change the pitch, because Web Audio has no time-stretching.
 
 **Rendering** (`CanvasRenderer`, framework-agnostic):
@@ -299,13 +301,30 @@ Identical requests share one job; a file already in the cache yields an immediat
 | `GET /api/me` | YouTube sign-in state: configured, signed in, source, avatar, home chips ([Signing in](#signing-in-opt-in)) |
 | `GET /api/me/feed/{recommended\|subscriptions\|history\|watch_later\|liked}?offset=` | The signed-in account's lists (401 `signed_out` when sign-in isn't set up) |
 | `GET /api/demo`, `GET /api/demo/{id}/layout` | Demo samples and their pixel layout |
+| `GET`/`HEAD /api/demo/{id}/source` | A demo sample's original file (Matroska, WebM or AVI) with byte ranges, for direct play |
+| `GET /api/apps` | The add-on apps and whether each is on |
+| `PUT /api/apps/{id}` `{enabled}` | Turn an app on or off (403 when `YTC_ENABLE_APPS=false`) |
+| `/api/apps/{id}/...` | The app's own routes; 404 `app_disabled` while it is off |
+| `GET /api/apps/plex/status`, `POST /api/apps/plex/signin`, `GET /api/apps/plex/signin/{pin}`, `DELETE /api/apps/plex/signin` | Plex connection state; start, check and end the PIN sign-in |
+| `GET /api/apps/plex/servers`, `PUT /api/apps/plex/server` | The account's servers; choose one |
+| `GET /api/apps/plex/home`, `/libraries`, `/libraries/{key}/items`, `/items/{key}`, `/search?q=`, `/image?path=` | Browsing, and posters through the backend |
+| `POST /api/apps/plex/play` `{key, audio_stream?, max_bitrate_kbps?, capabilities}` | Direct play or a transcode session, chosen for this browser |
+| `GET /api/apps/plex/sessions/{id}/file`, `/sessions/{id}/dash/...` | The original file in byte ranges (at most 16 MiB), or the transcoder's manifest and segments |
+| `POST /api/apps/plex/sessions/{id}/ping`, `DELETE /api/apps/plex/sessions/{id}`, `POST /api/apps/plex/timeline` | Keep a transcode alive, stop it, report progress |
+| `GET /api/pairing/status` | Whether this device is local, paired, or needs pairing |
+| `POST /api/pairing/requests`, `GET /api/pairing/requests/{id}` | Start pairing (returns the code) and collect the device cookie once approved |
+| `POST /api/pairing/approve` `{code}`, `GET /api/pairing/devices`, `DELETE /api/pairing/devices/{id}` | This computer only: approve a code, list paired and waiting devices, revoke |
 | `POST /api/jobs` `{source: "youtube"\|"demo", id}` | Create or join a preparation job (201 new, 200 existing) |
 | `GET /api/jobs/{id}` / `DELETE /api/jobs/{id}` | Job status / cancel |
 | `GET`/`HEAD /api/media/{media_id}` | Prepared MP4 with byte ranges |
+| `POST /api/diagnostics/browser` | Store a [browser check](#browser-check-check) report (JSON object, at most 64 KB; the newest 20 are kept in memory) |
+| `GET /api/diagnostics/browser` | The stored reports, newest first. Only for requests from this computer (403 `forbidden` through a tunnel) |
+| `GET /api/diagnostics/speed?bytes=` | That many random bytes (1 KB to 32 MB), for the speed test |
+| `GET /api/diagnostics/probe.mp4` | A tiny looping clip for the drive-lock probe, made once with FFmpeg |
 
 Errors are always `{"error": {code, message, hint, retryable}}`. The codes include:
 
-`invalid_input`, `not_found`, `unavailable`, `live_unsupported`, `restricted`, `youtube_blocked`, `download_forbidden`, `rate_limited`, `js_runtime_problem`, `no_formats`, `too_large`, `too_long`, `dependency_missing`, `storage_full`, `busy`, `timeout`, `processing_failed`, `cancelled`, `signed_out`, `signin_failed`, `forbidden`.
+`invalid_input`, `not_found`, `unavailable`, `live_unsupported`, `restricted`, `youtube_blocked`, `download_forbidden`, `rate_limited`, `js_runtime_problem`, `no_formats`, `too_large`, `too_long`, `dependency_missing`, `storage_full`, `busy`, `timeout`, `processing_failed`, `cancelled`, `signed_out`, `signin_failed`, `forbidden`, `app_disabled`, `plex_signed_out`, `plex_unreachable`, `plex_error`.
 
 Raw yt-dlp and FFmpeg output stays in the backend log with URL query strings redacted.
 
@@ -345,6 +364,43 @@ Before turning it on, weigh these:
 - **Terms of Service:** it's further outside YouTube's terms than signed-out use.
 - **Expiry:** if YouTube rotates or expires the session, `/api/me` reports why, and Home falls back to the public feeds.
 
+## Apps (add-ons)
+
+Optional features live in apps, each off until you turn it on in **Apps** (`/apps`, or *Add apps* in the sidebar). While an app is off, its routes answer 404 `app_disabled` and none of its code reaches the browser: its views load with `import()` only once it is on and opened. Turned-on apps get a sidebar entry right away.
+
+- **Plex** is the first app:
+  - **Connect:** *Connect Plex* opens Plex's own approval page in a new tab (Plex's PIN sign-in). Approve yt-canvas there; your password never goes through yt-canvas. The access token and the chosen server live in `YTC_CONFIG_DIR/plex.json` (mode 0600) and never reach the browser. yt-canvas finds your servers through your account and uses the first connection that answers (local, then remote, then relay). *Disconnect* forgets them.
+  - **Browse:** continue watching, recently added per library, library grids (title, recently added, year), movie, show, season and episode pages, and search. Posters come through the backend.
+  - **Play:** in the canvas player, decoded with WebCodecs. When the browser can decode the file (MKV, WebM or MP4 with H.264, HEVC, AV1 or VP9 video and AAC, MP3, Opus or FLAC audio), the original file is read in byte ranges with the MKV or MP4 reader. Otherwise Plex's transcoder makes DASH segments: it copies the video when it can and converts the rest, such as DTS or AC-3 audio. Playback resumes where Plex says you left off, reports progress back every 10 s and on pause, and has a quality menu (Original, or 20 to 2 Mbit/s, remembered per device) and an audio-track menu.
+- **Where choices live:** `YTC_CONFIG_DIR/apps.json` (default `~/.config/yt-canvas`), outside the repository and the media cache.
+- **Turning apps off for a server:** `YTC_ENABLE_APPS=false` keeps every app off, e.g. for a server shared through a tunnel.
+- **Privacy:** an app connected to private data (such as a Plex library) makes the API answer only this computer, like YouTube sign-in does, apart from paired devices (below).
+
+## Pairing other devices
+
+While yt-canvas holds private data (a connected Plex, or YouTube sign-in), the API answers only this computer. To use it from your phone or car, for example through a Cloudflare tunnel, pair the device:
+
+1. Open yt-canvas on the device. Instead of the app it shows **Pair this device**; tap it, optionally naming the device first. It shows a 6-digit code.
+2. On this computer, open **Devices** (`/devices`, linked from Apps) and type the code in. Codes last 10 minutes.
+3. The device finishes pairing on its own and opens the app.
+
+How it's kept safe:
+- **Approval:** only this computer can approve a code, so someone who finds your tunnel can't pair themselves. Pending devices are listed on Devices, so check the code on the device itself before approving.
+- **The cookie:** the device gets an HttpOnly, Secure, SameSite=Strict cookie that lasts 400 days. Only its SHA-256 hash is stored, in `YTC_CONFIG_DIR/devices.json` (mode 0600).
+- **Revoking:** Devices lists paired devices with when they were last seen; Revoke locks one out at once.
+- **Shared folder:** the dev server and a separate tunnel server read the same `devices.json`, so you can approve on either.
+- **Without pairing:** unpaired devices get only the pairing screen, `/api/pairing/*` and public pages.
+
+To run a tunnel server with Plex but without your YouTube cookies:
+
+```bash
+cd backend && YTC_IGNORE_DOTENV=1 YTC_DATA_DIR=/tmp/yt-canvas-tunnel YTC_FRONTEND_DIST=$PWD/../frontend/dist .venv/bin/python -m uvicorn app.main:app --port 8790
+```
+
+```bash
+cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8790
+```
+
 ## Demo / test media
 
 `YTC_ENABLE_DEMO=true` (the default) exposes three clips that FFmpeg generates locally, always labelled **DEMO** in the API and UI. They aren't linked from the UI: open `/demo` to play them. Each is encoded differently, so both pipeline paths get exercised:
@@ -364,11 +420,29 @@ Browser tests read these pixels back from the canvas.
 
 `YTC_DEMO_READRATE=N` caps generation at N× real time (FFmpeg 5.0+), so a clip takes a predictable minimum time to "download". The e2e suite sets 4, which keeps the `downloading` state visible even on machines fast enough to generate a clip in under a second.
 
+A fourth clip, `bench1080` (1920×1080 at 60 fps, 12 s, H.264/AAC), isn't listed on `/demo`: the browser check streams it for its benchmark.
+
+## Browser check (`/check`)
+
+`/check` measures what a browser can do for the player and sends a report back to this computer. It is meant for other browsers too, such as a car's, reached through a tunnel. It needs no sign-in and sends no location, account or personal data.
+
+| Part | What it measures |
+|---|---|
+| This browser | Chromium version, Tesla software build (from the user agent's `Tesla/` token), screen, CPU cores |
+| Video and audio decoding | WebCodecs support for H.264, HEVC, AV1, VP9 (and whether in hardware), AAC, MP3, Opus, FLAC, Vorbis, AC-3, E-AC-3, DTS, TrueHD |
+| Other features | Media Source types, Widevine, WebGL2, Geolocation, Wake Lock, fullscreen and more |
+| Playback benchmark | Streams `bench1080` through the canvas player, muted. It loads the whole clip first, then counts frames shown and dropped over 10 s |
+| Connection | Latency, plus download speed from this server over up to 24 MB: the path video takes |
+| Location speed (optional) | Whether the position comes with a speed (for a future drive lock). The position itself is never sent |
+| Drive lock probe (optional) | Plays a tiny muted video and records whether the browser pauses it, e.g. when a Tesla leaves Park |
+
+**Send** posts the report. Read it on this computer with `curl -s localhost:8000/api/diagnostics/browser`, using the port of the server it was sent to. The backend log also gets one summary line per report.
+
 ## Tests
 
 ```bash
-make test        # backend pytest (378) + frontend typecheck & vitest (56)
-make e2e         # Playwright, production build, demo media (16 tests, Chromium)
+make test        # backend pytest (419) + frontend typecheck & vitest (117)
+make e2e         # Playwright, production build, demo media and a fake Plex (21 tests, Chromium)
 make test-live   # opt-in: real YouTube (backend + browser)
 ```
 
@@ -381,11 +455,23 @@ make test-live   # opt-in: real YouTube (backend + browser)
   - cache LRU/TTL/leases and discovery cache coalescing
   - the real FFmpeg pipeline for all three demo samples
   - the YouTube page parser for feeds and related videos (renderer shapes, filtering, durations, view counts, errors)
+  - browser check reports (stored, newest first, size and shape limits, readable only from this computer), the speed-test payload, the probe video and the hidden 1080p60 benchmark clip
+  - add-on apps: listing, turning on and off, routes closed while off, choices kept across restarts, `YTC_ENABLE_APPS=false`, and the loopback guard while a private app is connected
+  - demo samples' original files served in byte ranges
+  - pairing: codes approved only on this computer, the device cookie (HttpOnly, Secure, SameSite=Strict, only its hash stored), stolen request ids, revoking, expiry, approval from another server process
+  - the Plex app against a fake plex.tv and server: PIN sign-in, server and connection choice, tokens only in headers and never in responses, browsing, poster paths, the direct-or-transcode decision, the range and DASH proxies, progress, disconnecting
 - **Frontend unit** (`frontend/src/**/*.test.ts(x)`), against fake media and canvas implementations:
   - the MP4 demuxer (sample tables, fragments with per-sample flags and composition offsets, `avcC`/`av1C`/`esds` codec strings, edit lists, locating `moov`)
   - the renderer loop (single pending callback, redraw on seek/pause, effects with and without `ctx.filter`, reset, dispose, backing size, rAF fallback)
   - `CanvasPlayer` controls, seeking, source changes, autoplay-blocked flow, errors, buffering, keyboard, unmount
   - sizing, shortcuts, localStorage handling
+  - the browser check's probes: Chromium and Tesla versions from user agents, the FLAC description, and codec probes with and without WebCodecs
+  - codec strings (HEVC from `hvcC`, VP9, AAC configs) and HEVC sample entries in MP4
+  - the MKV demuxer against 7 real files made by `frontend/scripts/make-mkv-fixtures.sh` (H.264, HEVC, AV1, VP9; AAC, Opus, AC-3, FLAC; a live file without Cues): every frame matches ffprobe's size, key flag and timestamp; plus hand-built lacing, header stripping and BlockGroups
+  - the MKV reader: frames split into windows exactly once each, every window starting on a key frame, reads limited to the window's bytes
+  - the Apps page and app routes (a turned-off app isn't loaded)
+  - the pairing screen and the Devices page
+  - the DASH reader on ffmpeg-made outputs (numbered segments and a SegmentTimeline): every frame decodes, each segment starting on a key frame
 - **Browser** (`frontend/e2e`), reading pixels with `getImageData`:
   - the page has no `<video>` or `<audio>` element, the audio context runs, and frames change during playback with the time bar matching `currentTime`
   - streaming and Download first both play through WebCodecs
@@ -398,6 +484,10 @@ make test-live   # opt-in: real YouTube (backend + browser)
   - next/previous change the source and the canvas follows the new aspect ratio
   - favorites and continue watching persist and resume
   - invalid or unknown media show clear errors
+  - `/check` runs the 1080p60 benchmark, the speed test and the drive-lock probe, and its report can be read back on this computer
+  - Apps: Plex stays off and its code unloaded until turned on, then gets a sidebar entry; the choice survives a reload
+  - direct play of Matroska (H.264/AAC) and WebM (VP9/Opus) in byte ranges, with seeking
+  - Plex end to end against `backend/tests/fakeplex.py`: connect through the approval tab, browse, search, play a file directly, play one with DTS audio through the transcoder's DASH, report progress, disconnect
   - the hidden-video fallback (`?engine=element`) with its decoder strategies, plus desktop (1440×900) and mobile (Pixel 7, 412×839 at 2.625× DPR) layouts with no horizontal overflow
 
 **Browser coverage:** only Playwright's Chromium 153 (headless shell, build 1243) was tested. Firefox, Safari/WebKit and real mobile devices were not tested.

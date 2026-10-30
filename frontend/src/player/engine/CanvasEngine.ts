@@ -1,4 +1,6 @@
 import { ApiError } from "../../api/http";
+import { CodecError, flacDescription } from "./codecs";
+import { MkvError } from "./mkv";
 import { Mp4Error, type AudioTrackConfig, type VideoTrackConfig } from "./mp4";
 import { isAbort, type EncodedSample, type EngineSource, type MediaReaders, type ReaderSegment, type TrackReader } from "./readers";
 
@@ -43,11 +45,18 @@ export interface EngineError {
   readonly message: string;
 }
 
+/** What the engine can decode in this browser: the capability profile sources pick tracks by. */
 export interface EngineSupport {
+  /** H.264 and AAC: what every source can fall back to. */
   supported: boolean;
   avc: boolean;
+  hevc: boolean;
   av1: boolean;
+  vp9: boolean;
   aac: boolean;
+  mp3: boolean;
+  opus: boolean;
+  flac: boolean;
 }
 
 class Ranges implements TimeRanges {
@@ -220,7 +229,7 @@ function planes(data: AudioData): Float32Array<ArrayBuffer>[] {
 
 function toEngineError(err: unknown): EngineError {
   if (err instanceof ApiError) return { code: 2, message: err.message || "A network error interrupted playback." };
-  if (err instanceof Mp4Error) return { code: 4, message: err.message };
+  if (err instanceof Mp4Error || err instanceof MkvError || err instanceof CodecError) return { code: 4, message: err.message };
   if (err instanceof DOMException && (err.name === "NotSupportedError" || err.name === "EncodingError")) {
     return { code: 3, message: "This video could not be decoded by your browser." };
   }
@@ -233,13 +242,23 @@ export class CanvasEngine extends EventTarget {
   /** Whether this browser can decode H.264 + AAC with WebCodecs and play it with Web Audio. */
   static probe(): Promise<EngineSupport> {
     support ??= (async () => {
-      const none = { supported: false, avc: false, av1: false, aac: false };
+      const none = { supported: false, avc: false, hevc: false, av1: false, vp9: false, aac: false, mp3: false, opus: false, flac: false };
       if (typeof VideoDecoder === "undefined" || typeof AudioDecoder === "undefined" || typeof AudioContext === "undefined") return none;
       const video = async (codec: string) => (await VideoDecoder.isConfigSupported({ codec }).catch(() => null))?.supported ?? false;
-      const audio = async (codec: string) =>
-        (await AudioDecoder.isConfigSupported({ codec, sampleRate: 44100, numberOfChannels: 2 }).catch(() => null))?.supported ?? false;
-      const [avc, av1, aac] = await Promise.all([video("avc1.42E01E"), video("av01.0.08M.08"), audio("mp4a.40.2")]);
-      return { supported: avc && aac, avc, av1, aac };
+      const audio = async (codec: string, description?: Uint8Array) =>
+        (await AudioDecoder.isConfigSupported({ codec, sampleRate: 48000, numberOfChannels: 2, description }).catch(() => null))
+          ?.supported ?? false;
+      const [avc, hevc, av1, vp9, aac, mp3, opus, flac] = await Promise.all([
+        video("avc1.42E01E"),
+        video("hvc1.1.6.L93.B0"),
+        video("av01.0.08M.08"),
+        video("vp09.00.10.08"),
+        audio("mp4a.40.2"),
+        audio("mp3"),
+        audio("opus"),
+        audio("flac", flacDescription(48000, 2)),
+      ]);
+      return { supported: avc && aac, avc, hevc, av1, vp9, aac, mp3, opus, flac };
     })();
     return support;
   }
@@ -272,6 +291,8 @@ export class CanvasEngine extends EventTarget {
   private queue: VideoFrame[] = [];
   private current: VideoFrame | null = null;
   private presented = 0;
+  /** Decoded frames replaced by a later one before they were shown (the clock got ahead). */
+  private dropped = 0;
   /** A frame must be shown before seeking or loading completes. */
   private needFrame = false;
   private seekTarget = 0;
@@ -401,12 +422,21 @@ export class CanvasEngine extends EventTarget {
 
   /** What the engine holds right now, for tests and debugging. */
   get diagnostics() {
+    const context = this.context;
     return {
-      audioContext: this.context?.state ?? "none",
+      audioContext: context?.state ?? "none",
+      audioOutput: context
+        ? {
+            sampleRate: context.sampleRate,
+            baseLatency: context.baseLatency ?? null,
+            outputLatency: "outputLatency" in context ? context.outputLatency : null,
+          }
+        : null,
       audioDecodedUntil: this.audioDecodedUntil,
       audioScheduled: this.audioChunks.filter((chunk) => chunk.node).length,
       framesQueued: this.queue.length,
       framesPresented: this.presented,
+      framesDropped: this.dropped,
       waiting: this.isWaiting,
     };
   }
@@ -599,6 +629,7 @@ export class CanvasEngine extends EventTarget {
     this.audioDecodedUntil = -Infinity;
     this.needFrame = false;
     this.presented = 0;
+    this.dropped = 0;
     this.clock.set(0);
   }
 
@@ -811,7 +842,11 @@ export class CanvasEngine extends EventTarget {
     if (pick < 0 && this.needFrame && !this.clock.running) pick = 0;
     if (pick < 0) return;
     const frame = this.queue[pick]!;
-    for (const late of this.queue.splice(0, pick + 1)) if (late !== frame) late.close();
+    for (const late of this.queue.splice(0, pick + 1)) {
+      if (late === frame) continue;
+      late.close();
+      this.dropped++;
+    }
     this.current?.close();
     this.current = frame;
     const first = this.presented === 0;

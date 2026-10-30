@@ -71,7 +71,7 @@ const sleep = (ms: number, signal?: AbortSignal) =>
   });
 
 /** Network hiccups and 5xx (except 502, YouTube refusing) are retried with backoff. */
-function withRetries(fetcher: RangeFetcher): RangeFetcher {
+export function withRetries(fetcher: RangeFetcher): RangeFetcher {
   return async (start, end, signal) => {
     for (let attempt = 0; ; attempt++) {
       try {
@@ -86,7 +86,7 @@ function withRetries(fetcher: RangeFetcher): RangeFetcher {
 }
 
 /** One request, or several when the range is larger than the proxy allows. */
-async function fetchSpan(fetcher: RangeFetcher, start: number, end: number, signal?: AbortSignal): Promise<ArrayBuffer> {
+export async function fetchSpan(fetcher: RangeFetcher, start: number, end: number, signal?: AbortSignal): Promise<ArrayBuffer> {
   if (end - start + 1 <= MAX_RANGE_BYTES) return fetcher(start, end, signal);
   const joined = new Uint8Array(end - start + 1);
   for (let from = start; from <= end; from += MAX_RANGE_BYTES) {
@@ -95,6 +95,17 @@ async function fetchSpan(fetcher: RangeFetcher, start: number, end: number, sign
   }
   return joined.buffer;
 }
+
+/**
+ * Wait for a shared fetch, but give up when this reader's load is aborted: the fetch itself
+ * keeps going for the other track that needs the same bytes.
+ */
+export const untilAborted = <T,>(promise: Promise<T>, abort: AbortSignal) =>
+  new Promise<T>((resolve, reject) => {
+    if (abort.aborted) return reject(new DOMException("Aborted", "AbortError"));
+    abort.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    promise.then(resolve, reject);
+  });
 
 const micros = (ticks: number, track: MovieTrack) => Math.round((ticks / track.timescale + track.shift) * 1e6);
 
@@ -277,13 +288,6 @@ async function openFile(fetcher: RangeFetcher, signal: AbortSignal): Promise<Med
     }
     return pending;
   };
-  const untilAborted = <T,>(promise: Promise<T>, abort: AbortSignal) =>
-    new Promise<T>((resolve, reject) => {
-      if (abort.aborted) return reject(new DOMException("Aborted", "AbortError"));
-      abort.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
-      promise.then(resolve, reject);
-    });
-
   const reader = (track: MovieTrack, pick: (window: Window) => [number, number]): TrackReader => ({
     config: track.config!,
     segments: windows.map((window) => ({ time: window.time, duration: window.duration })),
@@ -313,8 +317,9 @@ async function openFile(fetcher: RangeFetcher, signal: AbortSignal): Promise<Med
   };
 }
 
-/** A same-origin MP4 read with HTTP range requests (the prepared "Download first" file). */
-export function fileSource(url: string): EngineSource {
+/** A range fetcher for a same-origin URL, retried; ``size()`` is the total from Content-Range once known. */
+export function httpRangeFetcher(url: string): RangeFetcher & { size(): number | null } {
+  let total: number | null = null;
   const fetcher = withRetries(async (start, end, signal) => {
     let response: Response;
     try {
@@ -323,6 +328,8 @@ export function fileSource(url: string): EngineSource {
       if (isAbort(err)) throw err;
       throw new ApiError(0, { code: "network_error", message: "Lost contact with the server.", hint: null, retryable: true });
     }
+    const range = /\/(\d+)$/.exec(response.headers.get("Content-Range") ?? "");
+    if (range) total = Number(range[1]);
     if (response.status === 416) return new ArrayBuffer(0);
     if (!response.ok) {
       throw new ApiError(response.status, {
@@ -333,8 +340,15 @@ export function fileSource(url: string): EngineSource {
       });
     }
     const body = await response.arrayBuffer();
+    if (response.status === 200) total ??= body.byteLength;
     // A server that ignores Range sends the whole file.
     return response.status === 200 && (start > 0 || body.byteLength > end + 1) ? body.slice(start, end + 1) : body;
   });
+  return Object.assign(fetcher, { size: () => total });
+}
+
+/** A same-origin MP4 read with HTTP range requests (the prepared "Download first" file). */
+export function fileSource(url: string): EngineSource {
+  const fetcher = httpRangeFetcher(url);
   return { id: url, open: (signal) => openFile(fetcher, signal) };
 }

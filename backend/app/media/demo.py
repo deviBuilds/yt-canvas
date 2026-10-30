@@ -18,8 +18,11 @@ and the transcode paths are exercised.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from ..config import Settings
 from ..errors import AppError
@@ -31,7 +34,7 @@ from .provider import AcquiredMedia, JobContext, MediaInput, ResolvedMedia
 log = logging.getLogger(__name__)
 
 TIME_BAR_HEIGHT = 24
-FRAME_RATE = 30  # every sample's background and time bar are generated at this rate
+FRAME_RATE = 30  # the samples' default rate for the background and time bar
 DEMO_CHANNEL = ChannelInfo(ref=None, name="Demo media (local)")
 
 
@@ -48,6 +51,9 @@ class DemoSample:
     container: str
     tone_hz: int
     description: str
+    frame_rate: int = FRAME_RATE
+    # Shown on the Demo page; the benchmark clip for /check isn't.
+    listed: bool = True
 
     @property
     def swatch_size(self) -> int:
@@ -110,6 +116,21 @@ SAMPLES: dict[str, DemoSample] = {
             tone_hz=550,
             description="VP9/Opus in WebM → transcoded to H.264/AAC.",
         ),
+        DemoSample(
+            id="bench1080",
+            title="DEMO · 1080p60 decode benchmark (12 s)",
+            width=1920,
+            height=1080,
+            duration=12,
+            background="testsrc2=size={w}x{h}:rate=60:duration={d}",
+            video_args=("-c:v", "libx264", "-preset", "veryfast", "-g", "60", "-pix_fmt", "yuv420p"),
+            audio_args=("-c:a", "aac", "-b:a", "96k"),
+            container="matroska",
+            tone_hz=440,
+            description="1080p60 H.264/AAC streamed by the benchmark on /check.",
+            frame_rate=60,
+            listed=False,
+        ),
     )
 }
 
@@ -147,7 +168,8 @@ def lavfi_inputs(sample: DemoSample, readrate: int = 0) -> list[str]:
     throttle = ("-readrate", str(readrate)) if readrate else ()
     return [
         *throttle, "-f", "lavfi", "-i", sample.background.format(w=w, h=h, d=d),
-        *throttle, "-f", "lavfi", "-i", f"color=c=black:size={w}x{TIME_BAR_HEIGHT}:rate={FRAME_RATE}:duration={d}",
+        *throttle, "-f", "lavfi", "-i",
+        f"color=c=black:size={w}x{TIME_BAR_HEIGHT}:rate={sample.frame_rate}:duration={d}",
         *throttle, "-f", "lavfi", "-i", f"sine=frequency={sample.tone_hz}:sample_rate=48000:duration={d}",
     ]
 
@@ -175,6 +197,44 @@ def generator_args(settings: Settings, sample: DemoSample, output: str, *, with_
     ]
 
 
+CONTAINER_TYPES = {"matroska": ("mkv", "video/x-matroska"), "webm": ("webm", "video/webm"), "avi": ("avi", "video/x-msvideo")}
+_source_locks: dict[str, asyncio.Lock] = {}
+
+
+async def ensure_source(settings: Settings, sample: DemoSample) -> Path:
+    """The sample's original file (Matroska, WebM or AVI), made once and kept, for direct play.
+
+    The same file the demo provider prepares from, served as it is: the player reads it in
+    byte ranges, the way the Plex app plays files.
+    """
+    ext, _ = CONTAINER_TYPES[sample.container]
+    path = settings.data_dir / "demo-sources" / f"{sample.id}.{ext}"
+    async with _source_locks.setdefault(sample.id, asyncio.Lock()):
+        if path.is_file() and path.stat().st_size > 0:
+            return path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{sample.id}.{os.getpid()}.tmp.{ext}")
+        try:
+            last_error = ""
+            for with_label in (True, False):  # drawtext needs a font; retry without the label
+                try:
+                    result = await run_process(generator_args(settings, sample, str(tmp), with_label=with_label), timeout=120)
+                except ExecutableNotFound as exc:
+                    raise AppError("dependency_missing", "ffmpeg is required to generate demo media.", status=500,
+                                   hint="Install FFmpeg and make sure it is on PATH.") from exc
+                except ProcessTimeout as exc:
+                    raise AppError("processing_failed", "Generating demo media timed out.", status=500) from exc
+                if result.returncode == 0:
+                    os.replace(tmp, path)
+                    return path
+                last_error = result.stderr_tail
+            log.warning("demo source generation failed: %s", last_error[-4000:])
+            raise AppError("processing_failed", "Generating demo media failed.", status=500,
+                           hint="Check the backend log for the ffmpeg error.")
+        finally:
+            tmp.unlink(missing_ok=True)
+
+
 class DemoMediaProvider:
     source = "demo"
     supports_progressive = False
@@ -194,7 +254,7 @@ class DemoMediaProvider:
 
     async def acquire(self, resolved: ResolvedMedia, ctx: JobContext) -> AcquiredMedia:
         sample: DemoSample = resolved.details["sample"]
-        ext = {"matroska": "mkv", "avi": "avi", "webm": "webm"}[sample.container]
+        ext, _ = CONTAINER_TYPES[sample.container]
         output = ctx.workdir / f"source.{ext}"
         ctx.set_state(JobState.DOWNLOADING, "Generating demo source locally (no network)")
 

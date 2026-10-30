@@ -101,6 +101,15 @@ describe("parseMovie", () => {
     expect([...audio!.table!.keys]).toEqual([1, 1, 1, 1]);
   });
 
+  it("builds HEVC codec strings from hvcC", () => {
+    const record = [1, 0x01, 0x60, 0, 0, 0, 0xb0, 0, 0, 0, 0, 0, 93, 0xf0, 0, 0xfc, 0xfd, 0xf8, 0xf8, 0, 0, 0x0f, 0];
+    const hvc1 = box("hvc1", zeros(6), u16(1), zeros(16), u16(1920), u16(1080), zeros(50), box("hvcC", record));
+    const trak = box("trak", tkhd(1), box("mdia", mdhd(90000, 0), hdlr("vide"), box("minf", box("stbl", stsd(hvc1)))));
+    const movie = parseMovie(new Uint8Array(box("moov", mvhd(1000, 0), trak, box("mvex", full("trex", 0, 0, u32(1), u32(1), u32(0), u32(0), u32(0))))));
+    expect(movie.tracks[0]!.config).toMatchObject({ codec: "hvc1.1.6.L93.B0", width: 1920, height: 1080 });
+    expect(movie.tracks[0]!.config!.description).toEqual(new Uint8Array(record));
+  });
+
   it("builds AV1 codec strings from av1C", () => {
     const av01 = box("av01", zeros(6), u16(1), zeros(16), u16(1920), u16(1080), zeros(50), box("av1C", [0x81, 0x08, 0x0c, 0x00]));
     const trak = box("trak", tkhd(1), box("mdia", mdhd(90000, 0), hdlr("vide"), box("minf", box("stbl", stsd(av01)))));

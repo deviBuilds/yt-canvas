@@ -36,17 +36,24 @@ export function useEngineChoice(forced: string | null): EngineChoice {
     if (!webcodecs) return { kind: "element", canDecode: canStreamWithMediaSource };
     return {
       kind: "webcodecs",
-      canDecode: (track) => {
-        const codecs = track.codecs;
-        if (codecs.startsWith("avc1")) return support?.avc ?? true;
-        if (codecs.startsWith("av01")) return support?.av1 ?? false;
-        if (codecs.startsWith("mp4a")) return support?.aac ?? true;
-        return false;
-      },
+      canDecode: (track) => canEngineDecode(track.codecs, support),
     };
   }, [webcodecs, support]);
 }
 
 function canStreamWithMediaSource(track: StreamTrack): boolean {
   return typeof MediaSource !== "undefined" && MediaSource.isTypeSupported(`${track.mime_type}; codecs="${track.codecs}"`);
+}
+
+/** Can the WebCodecs engine decode ``codecs``? Before the probe settles, only H.264 and AAC count. */
+export function canEngineDecode(codecs: string, support: EngineSupport | null): boolean {
+  if (codecs.startsWith("avc1") || codecs.startsWith("avc3")) return support?.avc ?? true;
+  if (codecs.startsWith("hvc1") || codecs.startsWith("hev1")) return support?.hevc ?? false;
+  if (codecs.startsWith("av01")) return support?.av1 ?? false;
+  if (codecs.startsWith("vp09")) return support?.vp9 ?? false;
+  if (codecs.startsWith("mp4a")) return support?.aac ?? true;
+  if (codecs === "mp3") return support?.mp3 ?? false;
+  if (codecs === "opus") return support?.opus ?? false;
+  if (codecs === "flac") return support?.flac ?? false;
+  return false;
 }

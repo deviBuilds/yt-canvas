@@ -5,14 +5,25 @@ from __future__ import annotations
 from typing import Literal
 
 from fastapi import APIRouter, Query, Request, Response
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from .apps import AppList, AppRegistry, AppView
+from .diagnostics import (
+    MAX_REPORT_BYTES,
+    MAX_SPEED_BYTES,
+    MIN_SPEED_BYTES,
+    BrowserReports,
+    probe_video,
+    speed_payload,
+)
 from .discovery.account import AccountService
 from .discovery.service import DiscoveryService
 from .discovery.youtube_pages import YouTubePagesService
 from .errors import AppError
+from .localnet import is_local_request
 from .media.delivery import media_response
-from .media.demo import SAMPLES, demo_summary
+from .media.demo import CONTAINER_TYPES, SAMPLES, demo_summary, ensure_source
 from .media.jobs import JobManager
 from .media.models import JobView, StreamView
 from .media.storage import MediaStorage
@@ -127,9 +138,21 @@ async def demo_samples(request: Request) -> Page:
         kind="demo",
         title="Demo & test media",
         subtitle="Generated locally with FFmpeg — not from YouTube",
-        items=[demo_summary(sample) for sample in SAMPLES.values()],
+        items=[demo_summary(sample) for sample in SAMPLES.values() if sample.listed],
         provider="demo",
     )
+
+
+@router.api_route("/demo/{sample_id}/source", methods=["GET", "HEAD"])
+async def demo_source(request: Request, sample_id: str) -> Response:
+    """A demo sample's original file with byte ranges, for playing it directly (no preparation)."""
+    if not request.app.state.settings.enable_demo:
+        raise AppError("not_found", "Demo media is disabled (YTC_ENABLE_DEMO=false).", status=404)
+    sample = SAMPLES.get(sample_id)
+    if sample is None:
+        raise AppError("not_found", "Unknown demo sample.", status=404)
+    path = await ensure_source(request.app.state.settings, sample)
+    return FileResponse(path, media_type=CONTAINER_TYPES[sample.container][1], headers={"Cache-Control": "no-store"})
 
 
 @router.get("/demo/{sample_id}/layout")
@@ -196,3 +219,67 @@ async def stream_track(request: Request, session_id: str, track_id: str,
     data = await _streams(request).read(session_id, track_id, start, end)
     return Response(content=data, media_type="application/octet-stream",
                     headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+
+# -- add-on apps --------------------------------------------------------------------------
+
+
+def _apps(request: Request) -> AppRegistry:
+    return request.app.state.apps
+
+
+class AppToggle(BaseModel):
+    enabled: bool
+
+
+@router.get("/apps", response_model=AppList)
+async def list_apps(request: Request) -> AppList:
+    """The add-on apps and whether each is on. Their own routes live under /api/apps/<id>/."""
+    return _apps(request).listing()
+
+
+@router.put("/apps/{app_id}", response_model=AppView)
+async def set_app_enabled(request: Request, app_id: str, body: AppToggle) -> AppView:
+    return _apps(request).set_enabled(app_id, body.enabled)
+
+
+# -- browser check (/check) --------------------------------------------------------------
+
+
+def _reports(request: Request) -> BrowserReports:
+    return request.app.state.browser_reports
+
+
+@router.post("/diagnostics/browser")
+async def post_browser_report(request: Request) -> dict:
+    """Keep a /check report (capabilities and timings, nothing personal) for reading on this computer."""
+    body = bytearray()
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > MAX_REPORT_BYTES:
+            raise AppError("invalid_input", "The report is too large.", status=413)
+    return _reports(request).add(bytes(body))
+
+
+@router.get("/diagnostics/browser")
+async def list_browser_reports(request: Request) -> dict:
+    """The newest reports, first. Only this computer may read them, not visitors through a tunnel."""
+    if not is_local_request(request):
+        raise AppError("forbidden", "Browser check reports can only be read on the computer running yt-canvas.",
+                       status=403)
+    return {"reports": _reports(request).all()}
+
+
+@router.get("/diagnostics/speed")
+async def speed_test(size: int = Query(..., alias="bytes", ge=MIN_SPEED_BYTES, le=MAX_SPEED_BYTES)) -> Response:
+    """``bytes`` random bytes, to time the connection from the browser to this server."""
+    return StreamingResponse(speed_payload(size), media_type="application/octet-stream",
+                             headers={"Content-Length": str(size), "Cache-Control": "no-store",
+                                      "X-Content-Type-Options": "nosniff"})
+
+
+@router.get("/diagnostics/probe.mp4")
+async def drive_lock_probe(request: Request) -> Response:
+    """A tiny looping clip: the check page watches whether the browser pauses it (Tesla's drive lock)."""
+    path = await probe_video(request.app.state.settings)
+    return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "no-store"})
