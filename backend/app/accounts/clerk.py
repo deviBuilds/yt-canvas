@@ -26,6 +26,8 @@ import jwt
 log = logging.getLogger(__name__)
 
 LEEWAY = 5  # seconds of clock skew allowed
+# Clerk's APIs sit behind Cloudflare, whose bot checks answer 403 to Python's default User-Agent.
+USER_AGENT = "yt-canvas (+https://github.com/deviBuilds/yt-canvas)"
 JWKS_TTL = 3600
 JWKS_RETRY = 30  # at most one refetch this often when a token names an unknown key
 TIMEOUT = 10
@@ -52,7 +54,7 @@ def frontend_api(publishable_key: str) -> str:
 
 
 def _get_json(url: str, headers: dict[str, str]) -> tuple[int, Any]:
-    request = urllib.request.Request(url, headers={"Accept": "application/json", **headers})
+    request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": USER_AGENT, **headers})
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT) as response:  # noqa: S310 - fixed https URLs
             return response.status, json.loads(response.read())

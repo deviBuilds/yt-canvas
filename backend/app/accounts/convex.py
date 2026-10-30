@@ -15,6 +15,7 @@ import urllib.request
 from typing import Any, Protocol
 
 from ..errors import AppError
+from .clerk import USER_AGENT
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ class ConvexClient:
 
     def _post(self, body: bytes) -> tuple[int, bytes]:
         request = urllib.request.Request(self._url, data=body, method="POST", headers={
-            "Authorization": f"Bearer {self._secret}", "Content-Type": "application/json"})
+            "Authorization": f"Bearer {self._secret}", "Content-Type": "application/json", "User-Agent": USER_AGENT})
         try:
             with urllib.request.urlopen(request, timeout=TIMEOUT) as response:  # noqa: S310 - fixed https URL
                 return response.status, response.read()

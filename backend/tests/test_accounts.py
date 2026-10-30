@@ -420,3 +420,37 @@ def test_cookie_values_never_reach_the_logs(client, caplog):
     client.put("/api/me/cookies", content=COOKIES.encode(), headers=auth("user_admin"))
     client.get("/api/me", headers=auth("user_admin"))
     assert "secret" not in caplog.text.replace("YTC_SECRETS_KEY", "")
+
+
+@pytest.mark.anyio
+async def test_calls_to_clerk_and_convex_name_themselves(monkeypatch):
+    """Cloudflare, in front of Clerk's APIs, answers 403 to Python's default User-Agent."""
+    import io
+    import urllib.request
+
+    from app.accounts import clerk as clerk_module
+    from app.accounts.clerk import ClerkApi
+    from app.accounts.convex import ConvexClient
+
+    seen = []
+
+    class Answer(io.BytesIO):
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return None
+
+    def urlopen(request, timeout):
+        seen.append((request.full_url, request.get_header("User-agent")))
+        body = {"result": []} if "convex" in request.full_url else {
+            "id": "user_1", "primary_email_address_id": "e1", "email_addresses": [{"id": "e1", "email_address": "A@x.com"}]}
+        return Answer(json.dumps(body).encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    assert (await ClerkApi("sk_test_x").profile("user_1")).email == "a@x.com"
+    assert await ConvexClient("https://fake.convex.site", "s").call("allowlist.list") == []
+    assert [agent for _, agent in seen] == [clerk_module.USER_AGENT] * 2
+    assert "Python-urllib" not in clerk_module.USER_AGENT
